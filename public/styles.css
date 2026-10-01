@@ -23,6 +23,15 @@
   --spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   --shell: min(1120px, 100% - 40px);
+
+  /* Обводка панелек (контакты, техработы). Админ меняет --line в панели,
+     а полупрозрачные оттенки скрипт досчитывает от него — так не нужен color-mix. */
+  --line: #ffc043;
+  --line-ink: #ffc043;
+  --line-08: rgba(255, 192, 67, 0.08);
+  --line-16: rgba(255, 192, 67, 0.16);
+  --line-45: rgba(255, 192, 67, 0.45);
+  --line-80: rgba(255, 192, 67, 0.8);
 }
 
 [data-theme="dark"] {
@@ -324,16 +333,26 @@ html.booting #maintBanner {
 
 /* Заглушка в форме загрузки вместо зоны перетаскивания. */
 .maint-block {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   padding: 44px 24px;
-  border-radius: 20px;
-  border: 1px dashed rgba(255, 192, 67, 0.45);
-  background: rgba(255, 176, 32, 0.07);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--line-45);
+  background: linear-gradient(180deg, var(--line-08), rgba(255, 255, 255, 0) 70%), rgba(255, 255, 255, 0.02);
   text-align: center;
   cursor: not-allowed;
+  transition: border-color 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+
+/* Панель не для клика, но при наведении чуть оживает — как в макете. */
+.maint-block:hover {
+  border-color: var(--line-80);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line-16);
 }
 
 .maint-block[hidden] {
@@ -345,9 +364,16 @@ html.booting #maintBanner {
   place-items: center;
   width: 54px;
   height: 54px;
+  margin-bottom: 4px;
   border-radius: 16px;
-  color: #ffc043;
-  background: rgba(255, 192, 67, 0.12);
+  color: var(--line-ink);
+  background: var(--line-16);
+  transition: transform 0.4s var(--spring), background 0.3s var(--ease);
+}
+
+.maint-block:hover .maint-block-icon {
+  transform: scale(1.06) rotate(-5deg);
+  background: var(--line-45);
 }
 
 .maint-block-icon svg {
@@ -368,42 +394,160 @@ html.booting #maintBanner {
 }
 
 .home-contacts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px 26px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 12px;
   width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
 }
 
 .home-contacts[hidden] {
   display: none;
 }
 
+/* Панелька контакта — та же обводка, что у заглушки техработ. */
 .home-contact {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 10px 16px;
-  border-radius: 16px;
+  gap: 4px;
+  padding: 20px 18px 17px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-45);
+  background: linear-gradient(180deg, var(--line-08), rgba(255, 255, 255, 0) 72%), var(--fill-soft);
   color: var(--text);
   text-decoration: none;
-  transition: transform 0.2s var(--ease), background 0.2s var(--ease);
+  text-align: center;
+  transition:
+    transform 0.3s var(--ease),
+    border-color 0.3s var(--ease),
+    box-shadow 0.3s var(--ease),
+    background-color 0.3s var(--ease);
 }
 
-.home-contact:hover {
-  transform: translateY(-2px);
-  background: var(--fill-soft);
+/* Блик, пробегающий по панельке при наведении. */
+.home-contact::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 32%, var(--line-16) 50%, transparent 68%);
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease);
+}
+
+.home-contact:hover,
+.home-contact:focus-visible {
+  transform: translateY(-5px);
+  border-color: var(--line-80);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--line-16);
+  outline: none;
+}
+
+.home-contact:hover::after,
+.home-contact:focus-visible::after {
+  transform: translateX(120%);
+}
+
+.home-contact-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 6px;
+  border-radius: 13px;
+  color: var(--line-ink);
+  background: var(--line-16);
+  transition: transform 0.4s var(--spring), background 0.3s var(--ease);
+}
+
+.home-contact-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.home-contact:hover .home-contact-icon,
+.home-contact:focus-visible .home-contact-icon {
+  transform: scale(1.1) rotate(-5deg);
+  background: var(--line-45);
+}
+
+.home-contact.is-text {
+  cursor: default;
+}
+
+/* Контакт с галочкой «копировать» — сам себе кнопка. */
+button.home-contact,
+button.home-contact.is-text {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Значок «копируется» в углу панельки. */
+.home-contact-copy {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--line-ink);
+  background: var(--line-16);
+  opacity: 0.72;
+  transition: transform 0.3s var(--ease), opacity 0.3s var(--ease);
+}
+
+.home-contact-copy svg {
+  width: 13px;
+  height: 13px;
+}
+
+.home-contact:hover .home-contact-copy,
+.home-contact:focus-visible .home-contact-copy {
+  opacity: 1;
+  transform: scale(1.12);
+}
+
+.note-flag {
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  color: var(--line-ink);
+  vertical-align: -1px;
+}
+
+.home-contact-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .home-contact small {
-  font-size: 0.72rem;
-  color: var(--text-3);
+  font-size: 0.86rem;
+  color: var(--text-2);
   word-break: break-all;
-  max-width: 34ch;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Мобильный телефон: панельки на всю ширину, текст не мельчает. */
+@media (max-width: 520px) {
+  .home-contacts {
+    grid-template-columns: 1fr;
+  }
 }
 
 .home-rights {
@@ -1848,6 +1992,56 @@ main {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Выбор цвета обводки: кружок + готовые образцы. */
+.line-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field input[type='color'] {
+  width: 54px;
+  height: 44px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.field input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.field input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 10px;
+}
+
+.line-swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.line-swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--sw);
+  box-shadow: 0 0 0 1px var(--glass-stroke), var(--shadow-sm);
+  cursor: pointer;
+  transition: transform 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+
+.line-swatch:hover {
+  transform: scale(1.12);
+}
+
+.line-swatch.is-active {
+  border-color: var(--text);
 }
 
 .auth-form {

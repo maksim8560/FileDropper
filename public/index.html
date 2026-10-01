@@ -476,6 +476,22 @@
                 </span>
               </label>
 
+              <label class="field">
+                <span>Цвет обводки панелек</span>
+                <span class="line-picker">
+                  <input type="color" id="setLineColor" value="#ffc043" aria-label="Цвет обводки" />
+                  <span class="line-swatches">
+                    <button type="button" class="line-swatch" data-line="#ffc043" style="--sw: #ffc043" title="Янтарный"></button>
+                    <button type="button" class="line-swatch" data-line="#0a84ff" style="--sw: #0a84ff" title="Синий"></button>
+                    <button type="button" class="line-swatch" data-line="#bf5af2" style="--sw: #bf5af2" title="Фиолетовый"></button>
+                    <button type="button" class="line-swatch" data-line="#ff375f" style="--sw: #ff375f" title="Розовый"></button>
+                    <button type="button" class="line-swatch" data-line="#30d158" style="--sw: #30d158" title="Зелёный"></button>
+                    <button type="button" class="line-swatch" data-line="#f5f5f7" style="--sw: #f5f5f7" title="Светлый"></button>
+                  </span>
+                </span>
+                <small class="field-hint">Обводка контактов внизу главной и заглушки техработ. Любой цвет — можно выбрать свой</small>
+              </label>
+
               <h3 class="admin-sub">Подписка и оплата</h3>
               <p class="muted profile-note" id="subPayNote">
                 Оплата идёт через CloudPayments. Включи её, когда подключишь терминал в личном кабинете
@@ -608,6 +624,15 @@
                 <span>Значение</span>
                 <input type="text" id="contactValue" placeholder="https://t.me/… или @имя_канала" maxlength="300" />
                 <small class="field-hint">Для ссылки можно написать без https:// — добавим сами</small>
+              </label>
+
+              <label class="switch">
+                <input type="checkbox" id="contactCopy" />
+                <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                <span class="switch-text">
+                  Копировать по нажатию
+                  <small>Клик по панельке внизу главной сразу кладёт значение в буфер обмена. Для ссылки она вдобавок откроется</small>
+                </span>
               </label>
               <div class="admin-form-actions">
                 <button class="btn btn-primary" type="submit">

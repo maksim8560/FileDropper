@@ -318,6 +318,8 @@ const DEFAULT_SETTINGS = {
   allowRegistration: true,
   maintenance: false,
   anonymousTtlHours: 1,
+  // Цвет обводки панелек: контакты внизу главной и заглушка техработ.
+  lineColor: '#ffc043',
   // Подписка: с ней ссылка живёт до subMaxTtlDays, без неё — subFreeTtlHours.
   subEnabled: false,
   subPriceRub: 290,
@@ -396,6 +398,12 @@ function asciiSlug(name) {
 function displayName(name) {
   const cleaned = String(name).replace(/[\u0000-\u001f\u007f\\/]/g, '').trim().slice(0, 120);
   return cleaned || 'file';
+}
+
+/** Цвет обводки от админа: приводим к #rrggbb, мусор заменяем запасным. */
+function lineColorOf(value) {
+  const hex = String(value || '').trim().replace(/^#/, '');
+  return /^[\da-f]{6}$/i.test(hex) ? `#${hex.toLowerCase()}` : DEFAULT_SETTINGS.lineColor;
 }
 
 function contentDisposition(name, inline = false) {
@@ -731,7 +739,9 @@ function normalizeContact(body) {
       return null;
     }
   }
-  return { title, value, kind };
+  // Флажок «копировать по нажатию»: человек кликает по панельке и сразу
+  // получает значение в буфер обмена, ничего запоминать не надо.
+  return { title, value, kind, copyOnClick: body?.copyOnClick === true || body?.copyOnClick === 'true' };
 }
 
 async function listContacts(kv) {
@@ -747,7 +757,7 @@ async function listContacts(kv) {
 /** Контакты для главной: без служебных полей и без кувыркающихся ссылок. */
 function publicContacts(kv) {
   return listContacts(kv).then((list) =>
-    list.map(({ id, title, value, kind }) => ({ id, title, value, kind })),
+    list.map(({ id, title, value, kind, copyOnClick }) => ({ id, title, value, kind, copyOnClick: !!copyOnClick })),
   );
 }
 
@@ -804,6 +814,11 @@ async function handleAdminSettings(request, env, kv) {
   if (body.anonymousTtlHours !== undefined) patch.anonymousTtlHours = clamp(Number(body.anonymousTtlHours), 1, 24 * 30);
   if (body.allowRegistration !== undefined) patch.allowRegistration = !!body.allowRegistration;
   if (body.maintenance !== undefined) patch.maintenance = !!body.maintenance;
+  // Цвет обводки: только нормальный hex, иначе страница осталась бы без цвета.
+  if (body.lineColor !== undefined) {
+    const hex = String(body.lineColor).trim().replace(/^#/, '');
+    if (/^[\da-f]{6}$/i.test(hex)) patch.lineColor = `#${hex.toLowerCase()}`;
+  }
 
   // Подписка
   if (body.subEnabled !== undefined) patch.subEnabled = !!body.subEnabled;
@@ -984,6 +999,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
         heroLede: cfg.settings.heroLede,
         maintenance: cfg.settings.maintenance,
         allowRegistration: cfg.settings.allowRegistration,
+        lineColor: lineColorOf(cfg.settings.lineColor),
         anonymousTtlHours: clamp(Number(cfg.settings.anonymousTtlHours ?? 1), 1, 24 * 30) || 1,
         subEnabled: !!cfg.settings.subEnabled,
         subPriceRub: Number(cfg.settings.subPriceRub) || 0,

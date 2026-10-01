@@ -544,6 +544,7 @@ async function loadAdminPanel() {
     $('#setAnonTtl').value = s.anonymousTtlHours ?? 1;
     $('#setRegistration').checked = !!s.allowRegistration;
     $('#setMaintenance').checked = !!s.maintenance;
+    setLineColorField(s.lineColor);
 
     // Подписка и оплата
     $('#setSubEnabled').checked = !!s.subEnabled;
@@ -710,6 +711,7 @@ async function saveSettings(event) {
         anonymousTtlHours: Number($('#setAnonTtl').value),
         allowRegistration: $('#setRegistration').checked,
         maintenance: $('#setMaintenance').checked,
+        lineColor: $('#setLineColor').value,
         subEnabled: $('#setSubEnabled').checked,
         subPriceRub: Number($('#setSubPrice').value),
         subPeriodDays: Number($('#setSubPeriod').value),
@@ -727,7 +729,25 @@ async function saveSettings(event) {
   }
 }
 
+/** Образцы цвета: клик — сразу примеряем обводку, без сохранения. */
+function initLinePicker() {
+  const input = $('#setLineColor');
+  if (!input) return;
+
+  input.addEventListener('input', () => {
+    applyLineColor(input.value);
+    for (const swatch of document.querySelectorAll('.line-swatch')) {
+      swatch.classList.toggle('is-active', swatch.dataset.line === input.value.toLowerCase());
+    }
+  });
+
+  for (const swatch of document.querySelectorAll('.line-swatch')) {
+    swatch.addEventListener('click', () => setLineColorField(swatch.dataset.line));
+  }
+}
+
 function initAdmin() {
+  initLinePicker();
   $('#adminForm').addEventListener('submit', saveSettings);
   $('#subBuyBtn').addEventListener('click', buySubscription);
 
@@ -763,12 +783,14 @@ function initAdmin() {
     const title = $('#contactTitle').value.trim();
     const value = $('#contactValue').value.trim();
     const kind = $('#contactKind').value;
+    const copyOnClick = $('#contactCopy').checked;
     if (!title || !value) return toast('Заполни название и значение', 'err');
 
     try {
-      await api('/api/admin/contacts', { method: 'POST', body: { title, value, kind } });
+      await api('/api/admin/contacts', { method: 'POST', body: { title, value, kind, copyOnClick } });
       $('#contactTitle').value = '';
       $('#contactValue').value = '';
+      $('#contactCopy').checked = false;
       toast('Контакт добавлен', 'ok');
       await loadContacts();
       loadStats();
@@ -820,6 +842,8 @@ function initTheme() {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     localStorage.setItem('fo:theme', next);
+    // Цвет текста и иконок зависит от темы: на светлом он притемняется.
+    applyLineColor(state.stats?.settings?.lineColor);
   });
 }
 
@@ -830,6 +854,7 @@ async function loadStats() {
     const stats = await api('/api/stats');
     state.stats = stats;
 
+    applyLineColor(stats.settings?.lineColor);
     $('#statFiles').textContent = stats.listed ? String(stats.files) : '—';
     $('#statToday').textContent = Number.isFinite(stats.filesToday) ? String(stats.filesToday) : '—';
     renderContacts(stats.contacts);
@@ -1202,6 +1227,11 @@ async function loadContacts() {
     body.className = 'note-body';
     const title = document.createElement('b');
     title.textContent = item.title;
+    // Пометка, что контакт копируется по клику: иначе в панели не видно, что он особенный.
+    if (item.copyOnClick) {
+      title.append(icon('i-copy', 'note-flag'));
+      title.lastElementChild.title = 'Копируется по нажатию';
+    }
     const value = document.createElement('small');
     value.textContent = item.value;
     body.append(title, value);
@@ -1224,6 +1254,46 @@ async function loadContacts() {
 }
 
 /** Контакты внизу главной: приходят с сервера вместе со статистикой. */
+/** Готовый цвет для панелек: приводим к #rrggbb, мусор не пропускаем. */
+function normalizeLineColor(value) {
+  const hex = String(value || '').trim().replace(/^#/, '');
+  return /^[\da-f]{6}$/i.test(hex) ? `#${hex.toLowerCase()}` : '#ffc043';
+}
+
+/**
+ * Раздаёт выбранный цвет в CSS-переменные. Оттенки считаем сами, а не через
+ * color-mix: Яндекс.Браузер и старые сборки его не знают, и панельки стали бы
+ * без обводки. На светлой теме цвет притемняем — иначе иконки и подписи гаснут.
+ */
+function applyLineColor(value) {
+  const color = normalizeLineColor(value);
+  const n = parseInt(color.slice(1), 16);
+  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const light = document.documentElement.dataset.theme === 'light';
+  const ink = light ? rgb.map((c) => Math.round(c * 0.55)) : rgb;
+  const style = document.documentElement.style;
+
+  style.setProperty('--line', color);
+  style.setProperty('--line-ink', `rgb(${ink.join(', ')})`);
+  // Светлый фон съедает тонкую обводку — прибавляем плотности.
+  // rgba() собираем строго через запятые: «rgba(255 192 67, 0.45)» браузер не понимает.
+  const density = light ? 1.5 : 1;
+  for (const [name, alpha] of [['--line-08', 0.08], ['--line-16', 0.16], ['--line-45', 0.45], ['--line-80', 0.8]]) {
+    style.setProperty(name, `rgba(${rgb.join(', ')}, ${Math.min(0.92, alpha * density)})`);
+  }
+}
+
+/** Поле выбора цвета в панели: ставит значение и сразу примеряет на странице. */
+function setLineColorField(value) {
+  const input = $('#setLineColor');
+  if (!input) return;
+  input.value = normalizeLineColor(value);
+  applyLineColor(input.value);
+  for (const swatch of document.querySelectorAll('.line-swatch')) {
+    swatch.classList.toggle('is-active', swatch.dataset.line === input.value.toLowerCase());
+  }
+}
+
 function renderContacts(contacts) {
   const box = $('#homeContacts');
   if (!box) return;
@@ -1233,27 +1303,64 @@ function renderContacts(contacts) {
   box.hidden = list.length === 0;
 
   for (const item of list) {
+    // Панелька как на макете: иконка в квадрате, название, значение под ним.
+    // Ссылка всегда кликабельна; с флажком «копировать» — ещё и копирует значение.
+    const copies = !!item.copyOnClick;
+    const node = document.createElement(item.kind === 'link' ? 'a' : copies ? 'button' : 'span');
+    node.className = item.kind === 'link' ? 'home-contact' : 'home-contact is-text';
+    if (node.tagName === 'BUTTON') node.type = 'button';
     if (item.kind === 'link') {
-      const a = document.createElement('a');
-      a.className = 'home-contact';
-      a.href = item.value;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.append(document.createTextNode(item.title));
-      const hint = document.createElement('small');
-      hint.textContent = item.value;
-      a.append(hint);
-      box.append(a);
-      continue;
+      node.href = item.value;
+      node.target = '_blank';
+      node.rel = 'noopener noreferrer';
+    } else if (copies) {
+      node.tabIndex = 0;
     }
 
-    const span = document.createElement('span');
-    span.className = 'home-contact is-text';
-    span.append(document.createTextNode(item.title));
+    if (copies) {
+      const copy = async () => {
+        const ok = await copyText(item.value);
+        toast(ok ? `Скопировано: ${item.value}` : 'Не удалось скопировать — скопируйте вручную', ok ? 'ok' : 'err');
+      };
+      node.addEventListener('click', (e) => {
+        // У ссылки своё открытие в новой вкладке, отменять его не надо.
+        if (item.kind !== 'link') e.preventDefault();
+        copy();
+      });
+      if (item.kind !== 'link') {
+        node.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            copy();
+          }
+        });
+      }
+    }
+
+    const badge = document.createElement('span');
+    badge.className = 'home-contact-icon';
+    badge.append(icon(item.kind === 'link' ? 'i-link' : 'i-share'));
+    node.append(badge);
+
+    const name = document.createElement('span');
+    name.className = 'home-contact-name';
+    name.textContent = item.title;
+    node.append(name);
+
     const hint = document.createElement('small');
     hint.textContent = item.value;
-    span.append(hint);
-    box.append(span);
+    node.append(hint);
+
+    if (copies) {
+      // Значок в углу: панелька сама подсказывает, что по ней можно кликнуть.
+      const badge = document.createElement('span');
+      badge.className = 'home-contact-copy';
+      badge.setAttribute('aria-hidden', 'true');
+      badge.append(icon('i-copy'));
+      node.append(badge);
+    }
+
+    box.append(node);
   }
 }
 
