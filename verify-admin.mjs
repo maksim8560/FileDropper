@@ -1,30 +1,31 @@
-/** Проверка админ-панели и заметок (ASCII-пароль, чтобы PowerShell не портил аргументы). */
-const B = 'http://127.0.0.1:8788';
+/**
+ * Проверка админ-панели и заметок.
+ *
+ * Только вход, без регистрации: скрипт никогда не создаёт боевой админ-аккаунт
+ * с паролем по умолчанию. Логин и пароль задаются явно:
+ *   ADMIN_LOGIN=... ADMIN_PASSWORD=... node verify-admin.mjs
+ */
+const B = process.env.BASE || 'http://127.0.0.1:8788';
 const j = async (p, o = {}) => {
   const r = await fetch(B + p, o);
   return { s: r.status, b: await r.json().catch(() => null) };
 };
 
-const LOGIN = process.env.ADMIN_LOGIN || 'admintest2';
-const PASS = process.env.ADMIN_PASSWORD || 'admintest2-pass-2026';
+const LOGIN = process.env.ADMIN_LOGIN;
+const PASS = process.env.ADMIN_PASSWORD;
 
-let r = await j('/api/auth/register', {
+if (!LOGIN || !PASS) {
+  console.log('Пропущено: задайте ADMIN_LOGIN и ADMIN_PASSWORD (скрипт только входит, не регистрирует).');
+  process.exit(0);
+}
+
+const r = await j('/api/auth/login', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ login: LOGIN, password: PASS }),
 });
-console.log('регистрация:', r.s, r.b?.token ? '(токен есть)' : JSON.stringify(r.b));
-
-let token = r.b?.token;
-if (!token) {
-  r = await j('/api/auth/login', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ login: LOGIN, password: PASS }),
-  });
-  token = r.b?.token;
-  console.log('вход:', r.s, token ? '(токен есть)' : JSON.stringify(r.b));
-}
+const token = r.b?.token;
+console.log('вход:', r.s, token ? '(токен есть)' : JSON.stringify(r.b));
 if (!token) process.exit(1);
 
 const H = { authorization: 'Bearer ' + token };

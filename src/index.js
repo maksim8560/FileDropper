@@ -236,8 +236,11 @@ function normalizeLogin(login) {
 function validateCredentials(login, password) {
   const name = String(login || '').trim();
   const pass = String(password || '');
-  if (name.length < 3 || name.length > 24) return 'Логин: от 3 до 24 символов';
-  if (!/^[\p{L}\p{N}_.\- ]+$/u.test(name)) return 'Логин: только буквы, цифры, точка, дефис и подчёркивание';
+  if (name.length < 3 || name.length > 40) return 'Логин: от 3 до 40 символов';
+  // Разрешаем буквы (включая кириллицу), цифры, @, точку, дефис, подчёркивание
+  if (!/^[\p{L}\p{N}@._\- ]+$/u.test(name)) {
+    return 'Логин: буквы, цифры, @, точка, дефис или подчёркивание';
+  }
   if (pass.length < 8) return 'Пароль: минимум 8 символов';
   if (pass.length > 200) return 'Пароль: максимум 200 символов';
   return null;
