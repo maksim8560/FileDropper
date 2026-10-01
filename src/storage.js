@@ -17,12 +17,13 @@ import { Bucket } from '@upstash/blob';
 const DEFAULT_BLOB_URL = 'https://b2e0533cedea.blob.upstash.io';
 
 export class StorageError extends Error {
-  constructor(message, { status = 502, code = 'storage_error', hint = null } = {}) {
+  constructor(message, { status = 502, code = 'storage_error', hint = null, detail = null } = {}) {
     super(message);
     this.name = 'StorageError';
     this.status = status;
     this.code = code;
     this.hint = hint;
+    this.detail = detail;
   }
 }
 
@@ -74,10 +75,11 @@ class BlobStorage extends BaseStorage {
 
     if (status === 401 || status === 403 || /unauthorized|forbidden/i.test(raw)) {
       this.authState = 'unauthorized';
-      this.lastError = `Upstash Blob отклонил токен при операции «${action}»${status ? ` (HTTP ${status})` : ''}`;
+      this.lastError = `Upstash Blob отклонил токен при операции «${action}»${status ? ` (HTTP ${status})` : ''} — ${raw}`;
       return new StorageError('Хранилище отклонило токен доступа', {
         status: 502,
         code: 'blob_unauthorized',
+        detail: raw,
         hint: 'Проверьте секрет UPSTASH_BLOB_TOKEN (wrangler secret put UPSTASH_BLOB_TOKEN) и URL бакета в vars.UPSTASH_BLOB_URL.',
       });
     }
@@ -144,6 +146,25 @@ class BlobStorage extends BaseStorage {
       acceptRanges: res.headers.get('accept-ranges') || 'bytes',
       etag: res.headers.get('etag'),
     };
+  }
+
+  /**
+   * Подписанная ссылка на прямую загрузку: Worker только подписывает,
+   * а байты кладёт браузер. Так работает и быстрее (файл не идёт через
+   * Worker), и без лимита Cloudflare на тело запроса.
+   */
+  async signedUpload(key, contentType, size) {
+    try {
+      const signed = await this.bucket.signedUploadUrl(encodeKey(key), {
+        contentType,
+        size,
+        expiresIn: 900,
+      });
+      this.ok();
+      return { url: signed.url, headers: signed.headers ?? {} };
+    } catch (err) {
+      throw this.fail(err, `подпись ссылки ${key}`);
+    }
   }
 
   async del(key) {
@@ -246,6 +267,11 @@ class MemoryStorage extends BaseStorage {
       this.map.delete(key);
     }
     return true;
+  }
+
+  /** В аварийном режиме подписывать нечего: файл приходит через /api/upload. */
+  async signedUpload() {
+    return null;
   }
 
   async list(prefix = '', limit = 200) {

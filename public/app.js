@@ -781,55 +781,145 @@ function queueItem() {
   return { li, name, sub, bar, fill, actions };
 }
 
-function uploadFile(file) {
+/**
+ * Загрузка файла в два шага: Worker подписывает прямую ссылку в Upstash,
+ * браузер кладёт байты сам (с прогрессом) и подтверждает загрузку.
+ * Так файл не идёт через Worker — нет лимита на размер запроса.
+ */
+async function uploadFile(file) {
   const { li, name, sub, fill, actions } = queueItem();
   name.textContent = file.name;
-  sub.textContent = `${bytes(file.size)} · загрузка…`;
+  sub.textContent = `${bytes(file.size)} · готовлю ссылку…`;
   $('#queue').append(li);
 
-  const limit = (state.stats?.maxFileSizeMb ?? 25) * 1024 * 1024;
+  const limit = (state.stats?.maxFileSizeMb ?? 500) * 1024 * 1024;
   if (file.size > limit) {
     failItem(sub, fill, `Файл больше ${bytes(limit)}`);
     return;
   }
 
   const ownerToken = randomToken();
-  const form = new FormData();
-  form.append('file', file, file.name);
-  form.append('ttl', String(state.ttl));
-  form.append('once', state.once ? '1' : '0');
-  form.append('ownerToken', ownerToken);
 
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', apiUrl('/api/upload'));
+  try {
+    const sign = await api('/api/upload/sign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        size: file.size,
+        ttl: String(state.ttl),
+        once: state.once,
+        ownerToken,
+      }),
+    });
 
-  xhr.upload.addEventListener('progress', (e) => {
-    if (!e.lengthComputable) return;
-    const pct = Math.round((e.loaded / e.total) * 100);
-    fill.style.width = `${pct}%`;
-    sub.textContent = `${bytes(file.size)} · ${pct}%`;
-  });
-
-  xhr.addEventListener('load', () => {
-    let data = null;
-    try {
-      data = JSON.parse(xhr.responseText);
-    } catch {
-      /* не JSON */
+    // Аварийный режим (нет секрета хранилища) — файл идёт через Worker.
+    if (sign.memory) {
+      await uploadThroughWorker(file, ownerToken, { sub, fill, actions });
+      return;
     }
-    if (xhr.status >= 200 && xhr.status < 300 && data?.file) {
-      state.owners[data.file.id] = ownerToken;
-      saveJSON('fo:owners', state.owners);
-      doneItem(sub, fill, data, actions);
-      loadStats();
-    } else {
-      failItem(sub, fill, data?.error?.message || `Ошибка ${xhr.status}`);
-    }
-  });
 
-  xhr.addEventListener('error', () => failItem(sub, fill, 'Сеть недоступна'));
-  xhr.addEventListener('abort', () => failItem(sub, fill, 'Загрузка отменена'));
-  xhr.send(form);
+    await putWithProgress(sign.payload, file, (pct) => {
+      fill.style.width = `${pct}%`;
+      sub.textContent = `${bytes(file.size)} · ${pct}%`;
+    });
+
+    sub.textContent = `${bytes(file.size)} · сохраняю…`;
+    // Метаданные отправляем ровно теми байтами, которые подписал Worker,
+    // иначе R2 отклонит подпись. Поэтому Worker отдаёт само тело.
+    await putWithProgress(sign.meta, new TextEncoder().encode(sign.metaBody ?? ''));
+
+    const done = await api('/api/upload/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: sign.file.id }),
+    });
+
+    state.owners[done.file.id] = ownerToken;
+    saveJSON('fo:owners', state.owners);
+    doneItem(sub, fill, done, actions);
+    loadStats();
+  } catch (err) {
+    failItem(sub, fill, err.message || 'Загрузка не удалась');
+  }
+}
+
+/** PUT по подписанной ссылке с прогрессом. */
+function putWithProgress(target, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', target.url);
+
+    for (const [name_, value] of Object.entries(target.headers || {})) {
+      // content-length выставляет сам браузер, его задавать нельзя
+      if (name_.toLowerCase() === 'content-length') continue;
+      xhr.setRequestHeader(name_, value);
+    }
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e) => {
+        if (!e.lengthComputable) return;
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Хранилище ответило ${xhr.status}`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('Сеть недоступна при отправке в хранилище')));
+    xhr.addEventListener('abort', () => reject(new Error('Загрузка отменена')));
+
+    xhr.send(blob);
+  });
+}
+
+/** Запасной путь для аварийного режима: multipart через Worker. */
+function uploadThroughWorker(file, ownerToken, ui) {
+  return new Promise((resolve) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('ttl', String(state.ttl));
+    form.append('once', state.once ? '1' : '0');
+    form.append('ownerToken', ownerToken);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', apiUrl('/api/upload'));
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round((e.loaded / e.total) * 100);
+      ui.fill.style.width = `${pct}%`;
+      ui.sub.textContent = `${bytes(file.size)} · ${pct}%`;
+    });
+
+    xhr.addEventListener('load', () => {
+      let data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* не JSON */
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data?.file) {
+        state.owners[data.file.id] = ownerToken;
+        saveJSON('fo:owners', state.owners);
+        doneItem(ui.sub, ui.fill, data, ui.actions);
+        loadStats();
+        resolve();
+      } else {
+        failItem(ui.sub, ui.fill, data?.error?.message || `Ошибка ${xhr.status}`);
+        resolve();
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      failItem(ui.sub, ui.fill, 'Сеть недоступна');
+      resolve();
+    });
+
+    xhr.send(form);
+  });
 }
 
 function doneItem(sub, fill, data, actions) {

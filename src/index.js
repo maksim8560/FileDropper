@@ -681,22 +681,14 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     return json({ ok: true, files: index.filter((f) => !f.expiresAt || f.expiresAt > Date.now()).reverse() });
   }
 
-  /* --- загрузка --- */
+  /* --- загрузка: подпись → прямая отправка → фиксация --- */
+
+  // Аварийный режим (нет секрета) — файл идёт через Worker, как раньше.
   if (pathname === '/api/upload') {
     if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
 
-    if (cfg.settings.maintenance) {
-      return fail(503, 'Загрузки временно закрыты администратором', 'maintenance');
-    }
-
-    if (!allowUpload(clientIp(request))) {
-      return fail(429, 'Слишком много загрузок. Подождите несколько минут.', 'rate_limited');
-    }
-
-    const declared = Number(request.headers.get('content-length') || 0);
-    if (declared && declared > cfg.maxFileSize + 512 * 1024) {
-      return fail(413, `Файл больше лимита ${cfg.maxFileSize / 1024 / 1024} МБ`, 'too_large');
-    }
+    const gate = await uploadGate(request, cfg);
+    if (gate.error) return gate.error;
 
     let form;
     try {
@@ -708,63 +700,105 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     const file = form.get('file');
     if (!file || typeof file === 'string') return fail(400, 'Файл не передан', 'no_file');
     if (file.size === 0) return fail(400, 'Файл пустой', 'empty_file');
-    if (file.size > cfg.maxFileSize) {
-      return fail(413, `Файл больше лимита ${cfg.maxFileSize / 1024 / 1024} МБ`, 'too_large');
-    }
 
-    const once = form.get('once') === '1' || form.get('once') === 'true';
-    const session = await readSession(kv, request);
-
-    // Срок жизни выбирают только те, кто вошёл в аккаунт.
-    // Анонимным отдаём короткий срок (по умолчанию 1 час), даже если в форме
-    // подставлено другое значение.
-    const anonTtl = clamp(Number(cfg.settings.anonymousTtlHours ?? 1), 1, 24 * 30) || 1;
-    const ttlRaw = form.get('ttl');
-    const requested = ttlRaw === '' || ttlRaw === null ? cfg.defaultTtlHours : Number(ttlRaw);
-    const valid = Number.isFinite(requested) && requested >= 0;
-    const ttlHours = session ? (valid ? requested : cfg.defaultTtlHours) : anonTtl;
-
-    const now = Date.now();
-    const id = newId();
-    const name = displayName(file.name);
-    const key = `${FILE_PREFIX}${id}/${asciiSlug(name)}`;
-    const ownerToken = form.get('ownerToken')?.toString() || newId(24);
-    const owner = (await sha(ownerToken)).slice(0, 32);
-
-    const meta = {
-      id,
-      name,
-      key,
+    const meta = await buildMeta({
+      cfg,
+      session: await readSession(kv, request),
+      name: file.name,
+      type: file.type,
       size: file.size,
-      type: (file.type || 'application/octet-stream').slice(0, 120),
-      createdAt: now,
-      expiresAt: ttlHours > 0 ? now + ttlHours * 3600 * 1000 : null,
-      once,
-      downloads: 0,
-      lastDownloadAt: null,
-      owner,
-      userId: session?.userId ?? null,
-    };
+      ttl: form.get('ttl'),
+      once: form.get('once') === '1' || form.get('once') === 'true',
+      ownerToken: form.get('ownerToken')?.toString(),
+    });
+
+    if (meta.size > cfg.maxFileSize) return tooLarge(cfg);
 
     try {
-      // Потоковая загрузка: тело файла не дублируется в памяти воркера.
-      await storage.put(key, file.stream(), { contentType: meta.type, size: file.size });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await storage.put(meta.key, bytes, { contentType: meta.type, size: bytes.byteLength });
       await saveMeta(storage, meta);
-      if (session) background(ctx, addToUserIndex(kv, session.userId, meta));
+      if (meta.userId) background(ctx, addToUserIndex(kv, meta.userId, meta));
     } catch (err) {
-      if (err instanceof StorageError) return fail(err.status, err.message, err.code, { hint: err.hint });
-      return fail(502, 'Не удалось сохранить файл', 'storage_error');
+      return storageFailure(err);
     }
 
-    return json(
-      {
-        ok: true,
-        file: publicMeta(meta),
-        links: { page: `/f/${id}`, download: `/api/file/${id}?dl=1`, raw: `/api/raw/${id}` },
-        userId: meta.userId,
-      },
-      201,
-    );
+    return json({ ok: true, file: publicMeta(meta), links: linksFor(meta), userId: meta.userId }, 201);
+  }
+
+  /* Подпись: браузер положит файл сам, без прохода через Worker. */
+  if (pathname === '/api/upload/sign') {
+    if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+
+    const gate = await uploadGate(request, cfg);
+    if (gate.error) return gate.error;
+
+    const body = await request.json().catch(() => null);
+    if (!body) return fail(400, 'Нужен JSON с именем и размером файла', 'bad_json');
+
+    const size = Number(body.size);
+    if (!Number.isFinite(size) || size <= 0) return fail(400, 'Размер файла неизвестен', 'bad_size');
+    if (size > cfg.maxFileSize) return tooLarge(cfg);
+
+    const meta = await buildMeta({
+      cfg,
+      session: await readSession(kv, request),
+      name: body.name,
+      type: body.type,
+      size,
+      ttl: body.ttl,
+      once: body.once,
+      ownerToken: body.ownerToken,
+    });
+
+    if (!storage.signedUpload) {
+      // Аварийный режим: подписывать нечем, клиент пойдёт через /api/upload.
+      return json({ ok: true, memory: true, file: publicMeta(meta), links: linksFor(meta) });
+    }
+
+    try {
+      const metaJson = JSON.stringify(meta);
+      const [payload, metaPart] = await Promise.all([
+        storage.signedUpload(meta.key, meta.type, meta.size),
+        storage.signedUpload(`${META_PREFIX}${meta.id}.json`, 'application/json; charset=utf-8', byteLength(metaJson)),
+      ]);
+
+      return json(
+        {
+          ok: true,
+          file: publicMeta(meta),
+          links: linksFor(meta),
+          userId: meta.userId,
+          payload: { url: payload.url, headers: payload.headers },
+          meta: { url: metaPart.url, headers: metaPart.headers },
+          // Отдаём и само тело метаданных: клиент обязан отправить ровно те
+          // байты, что подписаны, иначе R2 отклонит подпись.
+          metaBody: metaJson,
+          expiresIn: 900,
+        },
+        201,
+      );
+    } catch (err) {
+      return storageFailure(err);
+    }
+  }
+
+  /* Фиксация: проверяем, что файл и метаданные долели, и правим индекс. */
+  if (pathname === '/api/upload/complete') {
+    if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+
+    const body = await request.json().catch(() => null);
+    const id = body?.id;
+    if (!id || !/^[a-z0-9]{4,32}$/.test(String(id))) return fail(400, 'Нужен корректный id', 'bad_id');
+
+    const meta = await readMeta(storage, id);
+    if (!meta) return fail(409, 'Файл не долетел до хранилища — попробуйте ещё раз', 'upload_incomplete');
+
+    const payload = await storage.get(meta.key);
+    if (!payload) return fail(409, 'Файл не долетел до хранилища — попробуйте ещё раз', 'upload_incomplete');
+
+    if (meta.userId) background(ctx, addToUserIndex(kv, meta.userId, meta));
+    return json({ ok: true, file: publicMeta(meta), links: linksFor(meta) });
   }
 
   /* --- конкретный файл --- */
@@ -938,6 +972,70 @@ async function cleanup(storage, kv) {
 
   return removed;
 }
+
+/* ---------------------------- загрузка ------------------------------ */
+
+function byteLength(text) {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function linksFor(meta) {
+  return { page: `/f/${meta.id}`, download: `/api/file/${meta.id}?dl=1`, raw: `/api/raw/${meta.id}` };
+}
+
+function tooLarge(cfg) {
+  return fail(413, `Файл больше лимита ${cfg.maxFileSize / 1024 / 1024} МБ`, 'too_large');
+}
+
+function storageFailure(err) {
+  if (err instanceof StorageError) {
+    return fail(err.status, err.message, err.code, { hint: err.hint, detail: err.detail });
+  }
+  return fail(502, 'Не удалось сохранить файл', 'storage_error');
+}
+
+/** Техрежим и лимит на IP — общие для всех вариантов загрузки. */
+async function uploadGate(request, cfg) {
+  if (cfg.settings.maintenance) {
+    return { error: fail(503, 'Загрузки временно закрыты администратором', 'maintenance') };
+  }
+  if (!allowUpload(clientIp(request))) {
+    return { error: fail(429, 'Слишком много загрузок. Подождите несколько минут.', 'rate_limited') };
+  }
+  return {};
+}
+
+/**
+ * Собирает метаданные загрузки. Срок выбирают только вошедшие: гостям
+ * отдаётся короткий срок (по умолчанию 1 час), что бы ни лежало в форме.
+ */
+async function buildMeta({ cfg, session, name, type, size, ttl, once, ownerToken }) {
+  const anonTtl = clamp(Number(cfg.settings.anonymousTtlHours ?? 1), 1, 24 * 30) || 1;
+  const requested = ttl === '' || ttl === null || ttl === undefined ? cfg.defaultTtlHours : Number(ttl);
+  const valid = Number.isFinite(requested) && requested >= 0;
+  const ttlHours = session ? (valid ? requested : cfg.defaultTtlHours) : anonTtl;
+
+  const now = Date.now();
+  const id = newId();
+  const shown = displayName(name);
+  const owner = (await sha(ownerToken || newId(24))).slice(0, 32);
+
+  return {
+    id,
+    name: shown,
+    key: `${FILE_PREFIX}${id}/${asciiSlug(shown)}`,
+    size: Number(size),
+    type: String(type || 'application/octet-stream').slice(0, 120),
+    createdAt: now,
+    expiresAt: ttlHours > 0 ? now + ttlHours * 3600 * 1000 : null,
+    once: !!once,
+    downloads: 0,
+    lastDownloadAt: null,
+    owner,
+    userId: session?.userId ?? null,
+  };
+}
+
 
 /* ------------------------------ Worker ------------------------------ */
 
