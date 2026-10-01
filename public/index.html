@@ -230,7 +230,8 @@
             </div>
           </div>
 
-          <ul class="queue" id="queue" aria-live="polite"></ul>
+          <!-- Ход загрузок и выбор срока показываются в отдельном окне, не здесь:
+               чтобы карточка не засорялась панелями — уведомление справа справляется сам -->
         </section>
 
         <!-- Как это работает -->
@@ -671,6 +672,27 @@
     </main>
 
     <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+    <!-- ================= Создание ссылок ================= -->
+    <div class="modal" id="linkModal" hidden>
+      <div class="modal-backdrop" data-close-link></div>
+
+      <div class="glass modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="linkTitle">
+        <button class="modal-close icon-btn" id="linkClose" type="button" aria-label="Закрыть">
+          <svg><use href="#i-x" /></svg>
+        </button>
+
+        <div class="modal-icon"><svg><use href="#i-link" /></svg></div>
+        <h2 class="modal-title" id="linkTitle">Файлы загружены</h2>
+        <p class="muted modal-sub">Выбери срок жизни ссылки — и она появится здесь же</p>
+
+        <div class="link-list" id="linkList"></div>
+
+        <div class="admin-form-actions" id="linkDoneWrap" hidden>
+          <button class="btn btn-primary" id="linkDone" type="button">Готово</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ================= Вход и регистрация ================= -->
     <div class="modal" id="authModal" hidden>

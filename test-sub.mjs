@@ -121,9 +121,13 @@ check('без подписки 30 дней → 403', blocked.status === 403, `st
 const list = await api('/api/admin/subscriptions', { headers: { authorization: `Bearer ${adminAuth.body.token}` } });
 check('список подписок доступен', list.status === 200 && Array.isArray(list.body?.list), `status=${list.status}`);
 
-/* --- оплата: без секретов должна ругаться, а не падать --- */
+/* --- оплата: по умолчанию всё выдаётся вручную --- */
 const checkout = await api('/api/billing/checkout', { method: 'POST', headers: { authorization: `Bearer ${reg.body.token}` } });
-check('без секретов CloudPayments — понятная ошибка', checkout.status === 503 && checkout.body?.error?.code === 'payment_not_configured', `status=${checkout.status} ${JSON.stringify(checkout.body).slice(0, 70)}`);
+check(
+  'в ручном режиме оплата не создаётся',
+  checkout.status === 403 && ['provider_manual', 'payment_not_configured'].includes(checkout.body?.error?.code),
+  `status=${checkout.status} ${JSON.stringify(checkout.body).slice(0, 70)}`,
+);
 
 /* --- подписка выключена админом --- */
 await api('/api/admin/settings', { method: 'PUT', headers: AH, body: JSON.stringify({ subEnabled: false }) });

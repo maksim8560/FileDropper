@@ -208,7 +208,69 @@ h3 {
   }
 }
 
-/* -------------------- Технические работы --------------------- */
+/* ------------------- Окно создания ссылок ------------------- */
+
+.modal-card-wide {
+  width: min(560px, 100%);
+  text-align: left;
+}
+
+.modal-card-wide .modal-icon,
+.modal-card-wide .modal-title,
+.modal-card-wide .modal-sub {
+  text-align: center;
+}
+
+.link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.link-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--r-lg, 18px);
+  border: 1px solid var(--hairline);
+  background: var(--fill-soft);
+}
+
+.link-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.link-row-head b {
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-row-head span {
+  font-size: 0.78rem;
+  flex: none;
+}
+
+.link-row-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.link-row-body .q-link {
+  flex: 1 1 100%;
+}
+
+/* --------------------- Технические работы --------------------- */
 
 /* Пока грузятся настройки и сессия, эти куски не показываем: иначе при
    перезагрузке мелькают кнопки входа и зона загрузки. Место под них

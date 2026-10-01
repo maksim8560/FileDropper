@@ -113,13 +113,24 @@ function button(label, iconId, className = 'btn btn-sm') {
   return btn;
 }
 
+/**
+ * Запрос к API. Объект в body превращаем в JSON сами: иначе он уедет как
+ * «[object Object]», сервер его не разберёт, а человек увидит ошибку в
+ * пустом месте.
+ */
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   // Сессия живёт в localStorage и передаётся заголовком: так работает и когда
   // фронт на GitHub Pages, а API на другом домене (куки там были бы third-party).
   if (state.token) headers.authorization = `Bearer ${state.token}`;
 
-  const res = await fetch(apiUrl(path), { cache: 'no-store', ...options, headers });
+  const init = { cache: 'no-store', ...options, headers };
+  if (init.body && typeof init.body === 'object' && !(init.body instanceof FormData) && !(init.body instanceof Blob) && !(init.body instanceof ArrayBuffer) && !ArrayBuffer.isView(init.body)) {
+    init.body = JSON.stringify(init.body);
+    if (!headers['content-type']) headers['content-type'] = 'application/json';
+  }
+
+  const res = await fetch(apiUrl(path), init);
   let data = null;
   try {
     data = await res.json();
@@ -138,17 +149,48 @@ async function api(path, options = {}) {
 
 /* ------------------------------ Тосты ------------------------------ */
 
-function toast(message, kind = 'info') {
+/**
+ * Уведомление справа. Прогресс загрузки идёт сюда же — отдельных панелей
+ * в карточке больше нет. Один и тот же текст подряд не дублируем, а
+ * сообщения одного файла заменяют друг друга, чтобы не сыпать десяток строк.
+ */
+const toastState = { last: '', at: 0 };
+
+function toast(message, kind = 'info', ttl = 4200) {
   const host = $('#toasts');
-  const el = document.createElement('div');
-  el.className = 'toast';
-  el.dataset.kind = kind;
-  el.append(icon(kind === 'ok' ? 'i-check' : kind === 'err' ? 'i-x' : 'i-bolt'), document.createTextNode(message));
-  host.append(el);
-  setTimeout(() => {
-    el.classList.add('out');
-    el.addEventListener('animationend', () => el.remove(), { once: true });
-  }, 4200);
+  if (!host) return;
+
+  // Тот же текст подряд — не плодим дубликаты.
+  const now = Date.now();
+  if (message === toastState.last && now - toastState.at < 1500) return;
+  toastState.last = message;
+  toastState.at = now;
+
+  // Сообщения одного файла: пока идёт его загрузка, старое заменяем новым.
+  const fresh = document.createElement('div');
+  fresh.className = 'toast';
+  fresh.dataset.kind = kind;
+  fresh.append(icon(kind === 'ok' ? 'i-check' : kind === 'err' ? 'i-x' : 'i-bolt'), document.createTextNode(message));
+  host.append(fresh);
+
+  let gone = false;
+  const hide = () => {
+    if (gone) return;
+    gone = true;
+    fresh.classList.add('out');
+    fresh.addEventListener('animationend', () => fresh.remove(), { once: true });
+  };
+  setTimeout(hide, ttl);
+
+  // Прогресс одного файла не копится: убираем прошлое сообщение о нём же.
+  const [name] = message.split(':');
+  if (name && name.length < 60) {
+    for (const other of host.querySelectorAll('.toast')) {
+      if (other !== fresh && other.textContent.startsWith(name)) {
+        other.remove();
+      }
+    }
+  }
 }
 
 async function copyText(text) {
@@ -1290,53 +1332,193 @@ function renderUploadHint(stats = state.stats) {
     `Подписка открывает выбор до ${sub.maxTtlDays || 30} дней, без неё ссылка живёт ${option}.`;
 }
 
+/* ---------------------------- Окно создания ссылок --------------------------- */
+
+/**
+ * После загрузки файл не висит панелькой в карточке: его срок выбирают в
+ * отдельном окне, там же появляется готовая ссылка. Ошибки — только в
+ * уведомлении справа.
+ */
+const linkModal = {
+  rows: new Map(), // id файла → элемент строки
+  order: [], // id файлов в порядке появления
+
+  open() {
+    const modal = $('#linkModal');
+    if (modal) modal.hidden = false;
+  },
+
+  close() {
+    const modal = $('#linkModal');
+    if (modal) modal.hidden = true;
+    this.order = [];
+    this.rows.clear();
+    const list = $('#linkList');
+    if (list) list.replaceChildren();
+    const done = $('#linkDoneWrap');
+    if (done) done.hidden = true;
+  },
+
+  /** Файл загружен, но срок ещё не выбран. */
+  add(data) {
+    const list = $('#linkList');
+    if (!list) return;
+
+    if (!this.rows.size) this.open();
+
+    const row = document.createElement('div');
+    row.className = 'link-row';
+
+    const head = document.createElement('div');
+    head.className = 'link-row-head';
+    const name = document.createElement('b');
+    name.textContent = data.file.name;
+    const size = document.createElement('span');
+    size.className = 'muted';
+    size.textContent = bytes(data.file.size);
+    head.append(name, size);
+    row.append(head);
+
+    const body = document.createElement('div');
+    body.className = 'link-row-body';
+    row.append(body);
+
+    this.rows.set(data.file.id, { row, body, data });
+    this.order.push(data.file.id);
+    list.append(row);
+
+    this.render(data.file.id);
+  },
+
+  /** Рисует текущий шаг: выбор срока либо готовую ссылку. */
+  render(id) {
+    const entry = this.rows.get(id);
+    if (!entry) return;
+
+    const { row, body, data } = entry;
+    body.replaceChildren();
+
+    if (data.link) {
+      const link = document.createElement('div');
+      link.className = 'q-link';
+      const text = document.createElement('b');
+      text.textContent = data.links.page;
+      link.append(icon('i-link'), text);
+
+      const copy = button('Копировать', 'i-copy');
+      copy.addEventListener('click', async () => {
+        const ok = await copyText(shareUrl(data.file.id));
+        toast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать', ok ? 'ok' : 'err');
+      });
+
+      const open = button('Открыть', 'i-share');
+      open.addEventListener('click', () => window.open(data.links.page, '_blank', 'noopener'));
+
+      body.append(link, copy, open);
+      return;
+    }
+
+    const guest = !state.user;
+    let hours = Number(state.billing?.ttl?.options?.[0]?.hours ?? 24);
+    let once = false;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'q-ttl';
+
+    const options = state.billing?.ttl?.options?.length
+      ? state.billing.ttl.options
+      : state.stats?.ttlOptions || [{ hours: 24, label: '24 часа' }];
+
+    const label = document.createElement('span');
+    label.className = 'q-ttl-label';
+    label.textContent = 'срок жизни';
+    wrap.append(label);
+
+    for (const opt of options) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'q-ttl-btn';
+      btn.textContent = opt.label;
+      btn.setAttribute('aria-pressed', String(hours === opt.hours));
+      btn.addEventListener('click', () => {
+        hours = opt.hours;
+        for (const other of wrap.querySelectorAll('.q-ttl-btn')) {
+          other.setAttribute('aria-pressed', String(other === btn));
+        }
+      });
+      wrap.append(btn);
+    }
+
+    wrap.append(onceToggle((value) => {
+      once = value;
+    }));
+
+    const create = button('Создать ссылку', 'i-link');
+    create.addEventListener('click', async () => {
+      create.disabled = true;
+      try {
+        const done = await api(`/api/file/${data.file.id}/link`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-owner-token': state.owners[data.file.id] || '',
+          },
+          body: JSON.stringify(guest ? { once } : { hours, once }),
+        });
+        this.rows.get(id).data.link = done.links;
+        this.render(id);
+        const doneWrap = $('#linkDoneWrap');
+        if (doneWrap) doneWrap.hidden = false;
+        toast(`«${done.file.name}» готов к обмену`, 'ok');
+      } catch (err) {
+        create.disabled = false;
+        toast(err.message || 'Не удалось создать ссылку', 'err');
+      }
+    });
+
+    wrap.append(create);
+    body.append(wrap);
+  },
+
+  /** Если ссылка создана хотя бы для одного файла — показываем «Готово». */
+  maybeShowDone() {
+    const anyLink = [...this.rows.values()].some((entry) => entry.data.link);
+    const doneWrap = $('#linkDoneWrap');
+    if (doneWrap) doneWrap.hidden = !anyLink;
+  },
+}
+
+function initLinkModal() {
+  $('#linkClose')?.addEventListener('click', () => linkModal.close());
+  $('#linkDone')?.addEventListener('click', () => linkModal.close());
+  $('#linkModal .modal-backdrop')?.addEventListener('click', () => linkModal.close());
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#linkModal').hidden) linkModal.close();
+  });
+}
+
 /* ----------------------------- Загрузка ---------------------------- */
 
-function queueItem() {
-  const li = document.createElement('li');
-  li.className = 'q-item';
-
-  const ic = document.createElement('div');
-  ic.className = 'q-icon';
-  ic.append(icon('i-file'));
-
-  const body = document.createElement('div');
-  body.className = 'q-body';
-  const name = document.createElement('div');
-  name.className = 'q-name';
-  const sub = document.createElement('div');
-  sub.className = 'q-sub';
-  const bar = document.createElement('div');
-  bar.className = 'q-progress';
-  const fill = document.createElement('i');
-  bar.append(fill);
-  body.append(name, sub, bar);
-
-  const actions = document.createElement('div');
-  actions.className = 'q-actions';
-
-  li.append(ic, body, actions);
-  return { li, name, sub, bar, fill, actions };
-}
 
 /**
  * Загрузка файла в два шага: Worker подписывает прямую ссылку в Upstash,
- * браузер кладёт байты сам (с прогрессом) и подтверждает загрузку.
- * Так файл не идёт через Worker — нет лимита на размер запроса.
+ * браузер кладёт байты сам (с прогрессом в уведомлении) и подтверждает
+ * загрузку. Файл не идёт через Worker — нет лимита на размер запроса.
+ *
+ * Отдельных панелей в карточке нет: прогресс идёт в уведомление справа,
+ * а выбор срока и готовая ссылка — в окне создания ссылок.
  */
 async function uploadFile(file) {
-  const { li, name, sub, fill, actions } = queueItem();
-  name.textContent = file.name;
-  sub.textContent = `${bytes(file.size)} · готовлю ссылку…`;
-  $('#queue').append(li);
-
   const limit = (state.stats?.maxFileSizeMb ?? 500) * 1024 * 1024;
   if (file.size > limit) {
-    failItem(sub, fill, `Файл больше ${bytes(limit)}`);
+    toast(`«${file.name}» больше ${bytes(limit)}`, 'err');
     return;
   }
 
   const ownerToken = randomToken();
+  const showProgress = (text) => {
+    toast(`«${file.name}»: ${text}`, 'info', 2400);
+  };
 
   try {
     const sign = await api('/api/upload/sign', {
@@ -1356,17 +1538,14 @@ async function uploadFile(file) {
 
     // Аварийный режим (нет секрета хранилища) — файл идёт через Worker.
     if (sign.memory) {
-      await uploadThroughWorker(file, ownerToken, { sub, fill, actions });
+      await uploadThroughWorker(file, ownerToken, showProgress);
       return;
     }
 
-    await putWithProgress(sign.payload, file, (pct) => {
-      fill.style.width = `${pct}%`;
-      sub.textContent = `${bytes(file.size)} · ${pct}%`;
-    });
+    await putWithProgress(sign.payload, file, (pct) => showProgress(`${pct}%`));
 
-    sub.textContent = `${bytes(file.size)} · сохраняю…`;
-    // Метаданные отправляем ровно теми байтами, которые подписал Worker,
+    showProgress('сохраняю…');
+    // Метаданные отправляем ровно те байты, которые подписал Worker,
     // иначе R2 отклонит подпись. Поэтому Worker отдаёт само тело.
     await putWithProgress(sign.meta, new TextEncoder().encode(sign.metaBody ?? ''));
 
@@ -1378,10 +1557,10 @@ async function uploadFile(file) {
 
     state.owners[done.file.id] = ownerToken;
     saveJSON('fo:owners', state.owners);
-    doneItem(sub, fill, done, actions);
+    linkModal.add(done);
     loadStats();
   } catch (err) {
-    failItem(sub, fill, err.message || 'Загрузка не удалась');
+    toast(err.message || `«${file.name}»: загрузка не удалась`, 'err');
   }
 }
 
@@ -1416,22 +1595,21 @@ function putWithProgress(target, blob, onProgress) {
 }
 
 /** Запасной путь для аварийного режима: multipart через Worker. */
-function uploadThroughWorker(file, ownerToken, ui) {
+function uploadThroughWorker(file, ownerToken, showProgress) {
   return new Promise((resolve) => {
     const form = new FormData();
     form.append('file', file, file.name);
     form.append('ttl', String(state.ttl));
     form.append('once', state.once ? '1' : '0');
     form.append('ownerToken', ownerToken);
+    form.append('pendingTtl', state.user ? '1' : '0');
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', apiUrl('/api/upload'));
 
     xhr.upload.addEventListener('progress', (e) => {
       if (!e.lengthComputable) return;
-      const pct = Math.round((e.loaded / e.total) * 100);
-      ui.fill.style.width = `${pct}%`;
-      ui.sub.textContent = `${bytes(file.size)} · ${pct}%`;
+      showProgress(`${Math.round((e.loaded / e.total) * 100)}%`);
     });
 
     xhr.addEventListener('load', () => {
@@ -1444,17 +1622,16 @@ function uploadThroughWorker(file, ownerToken, ui) {
       if (xhr.status >= 200 && xhr.status < 300 && data?.file) {
         state.owners[data.file.id] = ownerToken;
         saveJSON('fo:owners', state.owners);
-        doneItem(ui.sub, ui.fill, data, ui.actions);
+        linkModal.add(data);
         loadStats();
-        resolve();
       } else {
-        failItem(ui.sub, ui.fill, data?.error?.message || `Ошибка ${xhr.status}`);
-        resolve();
+        toast(data?.error?.message || `Ошибка ${xhr.status}`, 'err');
       }
+      resolve();
     });
 
     xhr.addEventListener('error', () => {
-      failItem(ui.sub, ui.fill, 'Сеть недоступна');
+      toast('Сеть недоступна при отправке в хранилище', 'err');
       resolve();
     });
 
@@ -1462,96 +1639,9 @@ function uploadThroughWorker(file, ownerToken, ui) {
   });
 }
 
-function doneItem(sub, fill, data, actions) {
-  fill.style.width = '100%';
-  sub.textContent = `${bytes(data.file.size)} · файл загружен`;
-  actions.replaceChildren();
 
-  // Ссылка создаётся после выбора: срок — вошедшим, одноразовость — всем.
-  // Гостям срок назначает сервер, поэтому переключатель срока им не показываем.
-  const guest = !state.user;
-  const create = async ({ hours, once }) => {
-    try {
-      const done = await api(`/api/file/${data.file.id}/link`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-owner-token': state.owners[data.file.id] || '',
-        },
-        body: JSON.stringify(guest ? { once } : { hours, once }),
-      });
-      showLink(sub, fill, done, actions);
-      toast(`«${done.file.name}» готов к обмену`, 'ok');
-    } catch (err) {
-      toast(err.message || 'Не удалось создать ссылку', 'err');
-      // Возвращаем выбор, чтобы можно было попробовать ещё раз.
-      actions.replaceChildren(guest ? onceOnly(create) : linkOptions(create));
-    }
-  };
 
-  actions.append(guest ? onceOnly(create) : linkOptions(create));
-}
 
-/** Гость: срок назначен сервером, выбрать можно только одноразовость. */
-function onceOnly(create) {
-  const wrap = document.createElement('div');
-  wrap.className = 'q-ttl';
-
-  const label = document.createElement('span');
-  label.className = 'q-ttl-label';
-  label.textContent = 'срок 1 час';
-  wrap.append(label);
-
-  let once = false;
-  const onceLabel = document.createElement('label');
-  onceLabel.className = 'q-ttl-once';
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.addEventListener('change', () => {
-    once = box.checked;
-  });
-  const text = document.createElement('span');
-  text.textContent = 'одноразовая ссылка';
-  onceLabel.append(box, text);
-  wrap.append(onceLabel);
-
-  const go = button('Создать ссылку', 'i-link');
-  go.addEventListener('click', () => create({ once }));
-  wrap.append(go);
-  return wrap;
-}
-
-function showLink(sub, fill, data, actions) {
-  fill.style.width = '100%';
-  sub.textContent = `${bytes(data.file.size)} · готово`;
-
-  const link = document.createElement('div');
-  link.className = 'q-link';
-  const linkText = document.createElement('b');
-  linkText.textContent = data.links.page;
-  link.append(icon('i-link'), linkText);
-
-  const copy = button('Копировать', 'i-copy');
-  copy.addEventListener('click', async () => {
-    const ok = await copyText(shareUrl(data.file.id));
-    toast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать', ok ? 'ok' : 'err');
-  });
-
-  const open = button('Открыть', 'i-share');
-  open.addEventListener('click', () => window.open(data.links.page, '_blank', 'noopener'));
-
-  actions.replaceChildren(link, copy, open);
-}
-
-function failItem(sub, fill, message) {
-  fill.parentElement.remove();
-  sub.replaceChildren();
-  const err = document.createElement('span');
-  err.className = 'q-error';
-  err.textContent = message;
-  sub.append(err);
-  toast(message, 'err');
-}
 
 /** Очередь с ограничением параллелизма, чтобы не забить канал. */
 async function enqueue(files) {
@@ -1853,6 +1943,7 @@ function init() {
 
   step('тема', initTheme);
   step('загрузка файлов', initDropzone);
+  step('окно ссылок', initLinkModal);
   step('вход', initAuth);
   step('панель управления', initAdmin);
   step('шапка', renderAuth);

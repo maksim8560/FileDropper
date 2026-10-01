@@ -69,10 +69,31 @@ function buildCsp(extraConnect = '') {
   ].join('; ');
 }
 
-/** Заголовки HTML-документа: в connect-src добавляем адрес API. */
+/**
+ * Адреса, куда странице разрешено обращаться из браузера.
+ *
+ * Кроме адреса API сюда обязателен адрес хранилища: файл браузер кладёт
+ * сам, по подписанной ссылке, и это запрос на другой домен. Без него
+ * браузер тихо блокирует загрузку, а страница пишет «сеть недоступна».
+ *
+ * Подписанная ссылка упирается не в адрес бакета, а в R2-эндпоинт аккаунта
+ * (*.r2.cloudflarestorage.com) — поэтому разрешаем оба. Подпись всё равно
+ * проверяется на стороне хранилища, лишнего доступа это не даёт.
+ */
+function connectSources(env) {
+  const list = new Set();
+  for (const value of [env.PUBLIC_API_ORIGIN, env.UPSTASH_BLOB_URL]) {
+    const origin = String(value || '').trim().replace(/\/+$/, '');
+    if (/^https?:\/\//i.test(origin)) list.add(origin);
+  }
+  list.add('https://*.r2.cloudflarestorage.com');
+  return [...list].join(' ');
+}
+
+/** Заголовки HTML-документа: в connect-src добавляем API и хранилище. */
 function documentHeaders(env) {
-  const apiOrigin = String(env.PUBLIC_API_ORIGIN || '').trim().replace(/\/+$/, '');
-  return { ...SECURITY_HEADERS, 'content-security-policy': buildCsp(apiOrigin ? ` ${apiOrigin}` : '') };
+  const extra = connectSources(env);
+  return { ...SECURITY_HEADERS, 'content-security-policy': buildCsp(extra ? ` ${extra}` : '') };
 }
 
 const ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
@@ -1981,7 +2002,8 @@ export default {
         const headers = new Headers(res.headers);
         for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
         for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
-        headers.set('content-security-policy', buildCsp());
+        const connect = connectSources(env);
+        headers.set('content-security-policy', buildCsp(connect ? ` ${connect}` : ''));
         return new Response(res.body, { status: res.status, headers });
       }
 
