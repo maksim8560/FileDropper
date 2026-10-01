@@ -282,7 +282,6 @@ async function logout() {
 function initAuth() {
   $('#loginBtn').addEventListener('click', () => openAuthModal('login'));
   $('#registerBtn').addEventListener('click', () => openAuthModal('register'));
-  $('#uploadHint').addEventListener('click', () => openAuthModal('login'));
 
   $('#authClose').addEventListener('click', closeAuthModal);
   $('#authModal').addEventListener('click', (e) => {
@@ -817,8 +816,8 @@ function renderStorageNotice(storage) {
 
 /**
  * Срок жизни и режим «одноразовая» выбирают после загрузки, поэтому в форме
- * загрузки остаётся одна подсказка. Гостям добавляем их срок — выбрать его
- * они не могут, но должны знать, сколько живёт файл.
+ * загрузки остаётся одна подсказка. Гостям срок назначает администратор, и он
+ * меняется в панели управления — подсказка подхватывает новое значение.
  */
 function renderUploadHint(stats = state.stats) {
   const text = $('#uploadHintText');
@@ -827,13 +826,9 @@ function renderUploadHint(stats = state.stats) {
   const hours = Number(stats?.settings?.anonymousTtlHours ?? 1) || 1;
   state.ttl = hours;
 
-  if (state.user) {
-    text.textContent = 'Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла.';
-    return;
-  }
   text.textContent =
-    `Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ` +
-    `Гостям ссылка живёт ${hours} ${plural(hours, ['час', 'часа', 'часов'])}.`;
+    'Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ' +
+    `Гостям ограничено до ${hours} ${plural(hours, ['часа', 'часов', 'часов'])}.`;
 }
 
 /* ----------------------------- Загрузка ---------------------------- */
@@ -1356,12 +1351,15 @@ function route() {
 /* ------------------------------ Старт ------------------------------ */
 
 function init() {
+  // Пока не пришли ни настройки, ни сессия, показываем «глухую» страницу:
+  // иначе при перезагрузке мелькают кнопки входа и зона загрузки.
+  document.documentElement.classList.add('booting');
+
   initTheme();
   initDropzone();
   initAuth();
   initAdmin();
   renderAuth();
-  loadProfile();
   route();
 
   addEventListener('popstate', route);
@@ -1380,7 +1378,11 @@ function init() {
     scrollTo({ top: 0, behavior: 'smooth' });
   });
 
-  loadStats();
+  // Снимаем «глухой» экран, когда оба запроса вернулись — что бы ни случилось.
+  Promise.allSettled([loadProfile(), loadStats()]).finally(() => {
+    document.documentElement.classList.remove('booting');
+  });
+
   setInterval(() => {
     if (!$('#view-home').hidden) loadStats();
   }, 60000);

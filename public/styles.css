@@ -51,17 +51,20 @@
 [data-theme="light"] {
   --bg: #eceef6;
   --text: #0b0b10;
-  --text-2: rgba(60, 60, 67, 0.62);
-  --text-3: rgba(60, 60, 67, 0.38);
-  --glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.55));
-  --glass-bg-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7));
+  /* Вторичные тексты были почти прозрачными — на светлом фоне читались плохо.
+     Теперь контраст 8:1 и 5:1 вместо 2:1. */
+  --text-2: #3d3d47;
+  --text-3: #61616d;
+  --glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.62));
+  --glass-bg-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.78));
   --glass-bg-overlay: linear-gradient(180deg, rgba(252, 252, 255, 0.96), rgba(244, 244, 250, 0.92));
-  --glass-stroke: rgba(255, 255, 255, 0.7);
+  /* Белая рамка на белом фоне не видна: в светлой теме обводка тёмная. */
+  --glass-stroke: rgba(15, 23, 42, 0.12);
   --glass-highlight: rgba(255, 255, 255, 0.95);
-  --hairline: rgba(15, 23, 42, 0.08);
-  --fill-soft: rgba(15, 23, 42, 0.045);
-  --shadow: 0 26px 60px rgba(28, 35, 61, 0.14), 0 2px 8px rgba(28, 35, 61, 0.06);
-  --shadow-sm: 0 10px 26px rgba(28, 35, 61, 0.1);
+  --hairline: rgba(15, 23, 42, 0.1);
+  --fill-soft: rgba(15, 23, 42, 0.05);
+  --shadow: 0 26px 60px rgba(28, 35, 61, 0.16), 0 2px 8px rgba(28, 35, 61, 0.08);
+  --shadow-sm: 0 10px 26px rgba(28, 35, 61, 0.12);
   --mesh-1: rgba(10, 132, 255, 0.42);
   --mesh-2: rgba(191, 90, 242, 0.34);
   --mesh-3: rgba(255, 55, 95, 0.24);
@@ -207,6 +210,18 @@ h3 {
 
 /* -------------------- Технические работы --------------------- */
 
+/* Пока грузятся настройки и сессия, эти куски не показываем: иначе при
+   перезагрузке мелькают кнопки входа и зона загрузки. Место под них
+   резервируется (visibility, а не display) — страница не прыгает. */
+html.booting .auth-box,
+html.booting .profile-box,
+html.booting #dropzone,
+html.booting #maintBlock,
+html.booting #uploadOptions,
+html.booting #maintBanner {
+  visibility: hidden;
+}
+
 /* Баннер технических работ: живёт внутри липкой шапки, поэтому не перекрывает
    её и остаётся на виду при прокрутке. */
 .maint-banner {
@@ -279,7 +294,8 @@ h3 {
 }
 
 /* Подсказка в форме загрузки: срок и одноразовость выбирают после загрузки.
-   Оранжевая рамка — чтобы взгляд сразу зацепился за неё. */
+   Оранжевая рамка — чтобы взгляд сразу зацепился за неё. Наведение осталось,
+   а нажатия нет: подсказка ничего не делает. */
 .upload-hint {
   display: flex;
   align-items: flex-start;
@@ -293,7 +309,6 @@ h3 {
   font-size: 0.85rem;
   line-height: 1.5;
   text-align: left;
-  cursor: pointer;
   transition: transform 0.25s var(--spring), background 0.2s var(--ease);
 }
 
@@ -674,11 +689,31 @@ main {
   transform: none;
 }
 
+/* Главная кнопка: не «радуга», а спокойный синий с объёмом — ближе к Apple,
+   чем к цветному градиенту. */
 .btn-primary {
   color: #fff;
-  border-color: transparent;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2) 60%, var(--accent-3));
-  box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #ffffff) 0%, var(--accent) 52%, color-mix(in srgb, var(--accent) 84%, #000000) 100%);
+  box-shadow:
+    0 10px 24px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.14);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.05) saturate(1.02);
+  box-shadow:
+    0 14px 30px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.btn-primary:active {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 76%, #000000) 0%, color-mix(in srgb, var(--accent) 88%, #ffffff) 100%);
 }
 
 .btn-danger {
@@ -1394,9 +1429,9 @@ main {
 .modal-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(5, 5, 10, 0.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
   animation: fade-in 0.3s var(--ease) both;
 }
 
@@ -1406,14 +1441,34 @@ main {
   }
 }
 
+/* Стеклянная карточка: плотное размытие фона, тонкий светлый кант сверху,
+   мягкая тень и внутренний блик — как в системных окнах Apple. */
 .modal-card {
   position: relative;
   width: min(420px, 100%);
-  padding: 32px 28px 26px;
-  border-radius: var(--r-xl);
+  padding: 34px 30px 26px;
+  border-radius: 30px;
+  border: 1px solid var(--glass-stroke);
   background: var(--glass-bg-overlay);
+  backdrop-filter: blur(34px) saturate(190%);
+  -webkit-backdrop-filter: blur(34px) saturate(190%);
+  box-shadow:
+    var(--shadow),
+    inset 0 1px 0 var(--glass-highlight),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.06);
   text-align: center;
   animation: modal-in 0.4s var(--spring) both;
+}
+
+/* Мягкий блик по верхнему краю стекла. */
+.modal-card::before {
+  content: '';
+  position: absolute;
+  inset: 1px 1px auto;
+  height: 42%;
+  border-radius: 29px 29px 60% 60% / 29px 29px 22px 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent);
+  pointer-events: none;
 }
 
 @keyframes modal-in {
@@ -1434,18 +1489,21 @@ main {
 .modal-icon {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
-  margin: 0 auto 16px;
-  border-radius: 20px;
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 18px;
+  border-radius: 22px;
   color: #fff;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 38%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 82%, #ffffff) 0%, var(--accent) 55%, color-mix(in srgb, var(--accent) 80%, #000000) 100%);
+  box-shadow:
+    0 14px 30px color-mix(in srgb, var(--accent) 34%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.16);
 }
 
 .modal-icon svg {
-  width: 26px;
-  height: 26px;
+  width: 27px;
+  height: 27px;
 }
 
 .modal-title {

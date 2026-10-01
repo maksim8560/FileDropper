@@ -23,7 +23,8 @@ const storage = createStorage({
   UPSTASH_BLOB_TOKEN: vars.UPSTASH_BLOB_TOKEN,
 });
 
-const TEST_USER = /^(full-check-|reload-test-|browser-reg-|prodcheck$|write-test$|admintest)/;
+const TEST_USER =
+  /^(full-check-|reload-test-|browser-reg-|ui-test-|ui2-|ui3-|dbg-|ttl-|link-|MixedCase-|maxdiway2-|obichny-test-|prodcheck$|write-test$|admintest)/;
 const yes = process.argv.includes('--yes');
 const doomed = new Map(); // ключ → причина
 
