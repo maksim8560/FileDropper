@@ -220,7 +220,7 @@ check('админка без токена → 401', adminAnon.status === 401, `s
 const adminUser = await json('/api/admin/overview', { headers: { authorization: `Bearer ${token}` } });
 check('админка обычному пользователю → 403', adminUser.status === 403, `status=${adminUser.status}`);
 
-const adminLogin = process.env.ADMIN_LOGIN || 'savin.maksim95@yandex.ru';
+const adminLogin = process.env.ADMIN_LOGIN || 'MaxDiWay';
 const adminPass = process.env.ADMIN_PASSWORD || 'test-admin-password-2024';
 let adminToken = null;
 try {
