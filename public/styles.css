@@ -393,13 +393,13 @@ html.booting #maintBanner {
   border-top: 1px solid var(--hairline);
 }
 
+/* Плитки не растягиваются: колонки фиксированной ширины, блок по центру. */
 .home-contacts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 208px));
+  justify-content: center;
   gap: 12px;
   width: 100%;
-  max-width: 640px;
-  margin: 0 auto;
 }
 
 .home-contacts[hidden] {
@@ -543,10 +543,10 @@ button.home-contact.is-text {
   white-space: nowrap;
 }
 
-/* Мобильный телефон: панельки на всю ширину, текст не мельчает. */
+/* На телефоне плитка остаётся той же ширины и просто встаёт по центру. */
 @media (max-width: 520px) {
-  .home-contacts {
-    grid-template-columns: 1fr;
+  .home-contact {
+    padding: 16px 14px 14px;
   }
 }
 
