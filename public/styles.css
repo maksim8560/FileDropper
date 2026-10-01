@@ -32,6 +32,9 @@
   --text-3: rgba(235, 235, 245, 0.38);
   --glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.105), rgba(255, 255, 255, 0.04));
   --glass-bg-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06));
+  /* Плотное стекло для оверлеев: меню профиля и модалок.
+     Обычных панелей хватает полупрозрачного — здесь текст лежит поверх контента. */
+  --glass-bg-overlay: linear-gradient(180deg, rgba(28, 28, 34, 0.92), rgba(16, 16, 21, 0.88));
   --glass-stroke: rgba(255, 255, 255, 0.14);
   --glass-highlight: rgba(255, 255, 255, 0.32);
   --hairline: rgba(255, 255, 255, 0.08);
@@ -52,6 +55,7 @@
   --text-3: rgba(60, 60, 67, 0.38);
   --glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.55));
   --glass-bg-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7));
+  --glass-bg-overlay: linear-gradient(180deg, rgba(252, 252, 255, 0.96), rgba(244, 244, 250, 0.92));
   --glass-stroke: rgba(255, 255, 255, 0.7);
   --glass-highlight: rgba(255, 255, 255, 0.95);
   --hairline: rgba(15, 23, 42, 0.08);
@@ -937,6 +941,7 @@ main {
   width: 268px;
   padding: 16px;
   border-radius: var(--r-lg);
+  background: var(--glass-bg-overlay);
   animation: drop-in 0.28s var(--spring) both;
 }
 
@@ -1247,6 +1252,7 @@ main {
   width: min(420px, 100%);
   padding: 32px 28px 26px;
   border-radius: var(--r-xl);
+  background: var(--glass-bg-overlay);
   text-align: center;
   animation: modal-in 0.4s var(--spring) both;
 }

@@ -674,14 +674,16 @@ async function loadStats() {
 function renderStoragePill(storage) {
   const pill = $('#storagePill');
   const text = $('#storageText');
+  // Подпись всегда одна, а состояние показывает точка и подсказка при наведении.
+  text.textContent = 'Статус системы';
   if (storage.degraded) {
     pill.dataset.state = 'warn';
-    text.textContent = storage.lastError ? 'токен не принят' : 'аварийный режим';
-    pill.title = storage.lastError || 'Файлы хранятся в памяти воркера';
+    pill.title = storage.lastError
+      ? `Хранилище работает в аварийном режиме. ${storage.lastError}`
+      : 'Файлы хранятся в памяти воркера и исчезнут после перезапуска';
   } else {
     pill.dataset.state = 'ok';
-    text.textContent = 'Upstash Blob';
-    pill.title = 'Файлы сохраняются в Upstash Blob';
+    pill.title = 'Файлы, аккаунты и настройки сохраняются в Upstash Blob';
   }
 }
 
@@ -1105,6 +1107,7 @@ function route() {
   $('#view-profile').hidden = true;
 
   if (location.hash.startsWith('#/profile')) {
+    $('#view-profile').hidden = false;
     renderProfile();
   } else {
     const id = currentFileId();
