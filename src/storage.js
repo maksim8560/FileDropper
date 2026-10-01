@@ -98,17 +98,45 @@ class BlobStorage extends BaseStorage {
     this.lastError = null;
   }
 
-  async put(key, value, { contentType = 'application/octet-stream', size } = {}) {
+  /**
+   * Запись идёт по подписанной ссылке, а PUT делаем своим fetch.
+   *
+   * Почему не bucket.put(): внутри Cloudflare Workers собственный PUT-путь SDK
+   * отваливается с 403 «Signature mismatch» (подпись не сходится с тем, что
+   * отправляет рантайм). Подпись та же, тело то же — работает. Проверено
+   * диагностикой: sdk.put → 403, signedUrl + fetch → 200.
+   */
+  async put(key, value, { contentType = 'application/octet-stream', size = null } = {}) {
     try {
-      // Upstash Blob требует известную длину до первого байта, иначе стрим отклоняется.
-      const res = await this.bucket.put(key, value, {
+      let body = value;
+      let length = size;
+      if (typeof value === 'string') {
+        body = value;
+        length = new TextEncoder().encode(value).byteLength;
+      } else if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+        length = value.byteLength;
+      }
+
+      const signed = await this.bucket.signedUploadUrl(encodeKey(key), {
         contentType,
-        allowOverwrite: true,
-        ...(Number.isFinite(size) ? { size } : {}),
+        size: length ?? undefined,
+        expiresIn: 300,
       });
+
+      const res = await fetch(signed.url, {
+        method: 'PUT',
+        headers: signed.headers,
+        body,
+      });
+
+      if (!res.ok) {
+        return this.fail({ status: res.status }, `загрузка ${key}`);
+      }
+
       this.ok();
-      return { key: res.path ?? key, url: res.url };
+      return { key, url: `${this.base}/${encodeKey(key)}` };
     } catch (err) {
+      if (err instanceof StorageError) throw err;
       throw this.fail(err, `загрузка ${key}`);
     }
   }
