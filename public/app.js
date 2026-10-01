@@ -445,7 +445,7 @@ async function loadAdminPanel() {
       ['Сессий', overview.counts.sessions],
       ['Записей', overview.counts.notes ?? 0],
       ['Объём', bytes(overview.counts.bytes)],
-      ['Хранилище', overview.storage.degraded ? 'аварийный режим' : 'Upstash Blob'],
+      ['Хранилище', overview.storage.degraded ? 'аварийный режим' : 'в облаке'],
     ];
     const grid = $('#adminStats');
     grid.replaceChildren();
@@ -646,7 +646,7 @@ async function loadStats() {
 
     $('#statFiles').textContent = stats.listed ? String(stats.files) : '—';
     $('#statSize').textContent = `${stats.maxFileSizeMb} МБ`;
-    $('#statBackend').textContent = stats.storage.degraded ? 'в памяти' : 'Upstash Blob';
+    $('#statBackend').textContent = stats.storage.degraded ? 'в памяти' : 'в облаке';
     $('#limitsHint').textContent = `До ${stats.maxFileSizeMb} МБ на файл · до ${stats.maxFiles ?? 4} файлов за раз`;
 
     // Тексты и режимы приходят из панели управления
@@ -683,7 +683,7 @@ function renderStoragePill(storage) {
       : 'Файлы хранятся в памяти воркера и исчезнут после перезапуска';
   } else {
     pill.dataset.state = 'ok';
-    pill.title = 'Файлы, аккаунты и настройки сохраняются в Upstash Blob';
+    pill.title = 'Файлы, аккаунты и настройки сохраняются в надёжном облачном хранилище';
   }
 }
 
