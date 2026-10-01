@@ -177,8 +177,8 @@ function setSession(token, user) {
   if (state.token) localStorage.setItem('fo:token', state.token);
   else localStorage.removeItem('fo:token');
   renderAuth();
-  // Переключатель срока появляется только после входа
-  if (state.stats) renderTtlGroup(state.stats);
+  // Подсказка в форме зависит от того, вошёл ли пользователь
+  if (state.stats) renderUploadHint(state.stats);
 }
 
 function renderAuth() {
@@ -282,7 +282,7 @@ async function logout() {
 function initAuth() {
   $('#loginBtn').addEventListener('click', () => openAuthModal('login'));
   $('#registerBtn').addEventListener('click', () => openAuthModal('register'));
-  $('#ttlHint').addEventListener('click', () => openAuthModal('login'));
+  $('#uploadHint').addEventListener('click', () => openAuthModal('login'));
 
   $('#authClose').addEventListener('click', closeAuthModal);
   $('#authModal').addEventListener('click', (e) => {
@@ -333,7 +333,8 @@ function fileRow(file, { onDelete = null, badge = null } = {}) {
   const sub = document.createElement('div');
   sub.className = 'q-sub';
   const bits = [bytes(file.size), dateTime(file.createdAt)];
-  if (file.expiresAt) bits.push(`удалится ${timeLeft(file.expiresAt)}`);
+  if (file.ttlPending) bits.push('срок не выбран');
+  else if (file.expiresAt) bits.push(`удалится ${timeLeft(file.expiresAt)}`);
   if (file.once) bits.push('одноразовая');
   if (file.expired) bits.push('срок истёк');
   if (badge) bits.push(badge);
@@ -343,7 +344,30 @@ function fileRow(file, { onDelete = null, badge = null } = {}) {
   const actions = document.createElement('div');
   actions.className = 'q-actions';
 
+  // Файл загружен, но срок не выбран: ссылки пока нет, предлагаем выбрать.
+  if (file.ttlPending) {
+    const wrap = document.createElement('div');
+    wrap.className = 'q-ttl';
+    const create = async ({ hours, once }) => {
+      try {
+        await api(`/api/file/${file.id}/link`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ hours, once }),
+        });
+        toast('Ссылка создана', 'ok');
+      } catch (err) {
+        toast(err.message || 'Не удалось создать ссылку', 'err');
+      }
+      renderProfile();
+      loadStats();
+    };
+    wrap.append(linkOptions(create));
+    actions.append(wrap);
+  }
+
   const copy = button('Копировать', 'i-copy');
+  copy.hidden = !!file.ttlPending;
   copy.addEventListener('click', async () => {
     const ok = await copyText(shareUrl(file.id));
     toast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать', ok ? 'ok' : 'err');
@@ -658,17 +682,102 @@ async function loadStats() {
       }
       $('#heroLede').textContent = stats.settings.heroLede || '';
       state.registrationOpen = stats.settings.allowRegistration !== false;
-      const maint = $('#maintenanceNotice');
-      maint.hidden = !stats.settings.maintenance;
+      setMaintenance(!!stats.settings.maintenance);
     }
 
     renderStoragePill(stats.storage);
-    renderTtlGroup(stats);
+    renderUploadHint(stats);
     renderStorageNotice(stats.storage);
   } catch {
     $('#statFiles').textContent = '—';
     renderStoragePill({ degraded: true, provider: 'offline' });
   }
+}
+
+/**
+ * Технические работы: баннер на всех страницах, а форма загрузки перестаёт
+ * принимать файлы — вместо зоны перетаскивания показываем заглушку.
+ */
+function setMaintenance(on) {
+  state.maintenance = !!on;
+  document.body.classList.toggle('is-maint', state.maintenance);
+
+  const banner = $('#maintBanner');
+  if (banner) banner.hidden = !state.maintenance;
+
+  const zone = $('#dropzone');
+  if (zone) {
+    zone.hidden = state.maintenance;
+    zone.setAttribute('aria-disabled', String(state.maintenance));
+  }
+  const block = $('#maintBlock');
+  if (block) block.hidden = !state.maintenance;
+
+  const input = $('#fileInput');
+  if (input) input.disabled = state.maintenance;
+}
+
+/**
+ * Шаг после загрузки: выбираем срок жизни и одноразовость, затем появляется
+ * ссылка. Гостям срок назначается сам, но одноразовую ссылку они выбрать могут.
+ */
+function linkOptions(create) {
+  const wrap = document.createElement('div');
+  wrap.className = 'q-ttl';
+
+  const label = document.createElement('span');
+  label.className = 'q-ttl-label';
+  label.textContent = 'срок жизни';
+  wrap.append(label);
+
+  const options = state.stats?.ttlOptions || [
+    { hours: 1, label: '1 час' },
+    { hours: 24, label: '24 часа' },
+    { hours: 168, label: '7 дней' },
+    { hours: 0, label: 'Навсегда' },
+  ];
+
+  let hours = Number(state.stats?.defaultTtlHours ?? 24) || 24;
+  let once = false;
+
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'q-ttl-btn';
+    btn.textContent = opt.label;
+    btn.setAttribute('aria-pressed', String(hours === opt.hours));
+    btn.addEventListener('click', () => {
+      hours = opt.hours;
+      for (const other of wrap.querySelectorAll('.q-ttl-btn')) {
+        other.setAttribute('aria-pressed', String(other === btn));
+      }
+    });
+    wrap.append(btn);
+  }
+
+  wrap.append(onceToggle((value) => {
+    once = value;
+  }));
+
+  const go = button('Создать ссылку', 'i-link');
+  go.addEventListener('click', () => create({ hours, once }));
+  wrap.append(go);
+
+  return wrap;
+}
+
+/** Переключатель одноразовой ссылки для шага «создать ссылку». */
+function onceToggle(onChange, initial = false) {
+  const label = document.createElement('label');
+  label.className = 'q-ttl-once';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = initial;
+  box.addEventListener('change', () => onChange(box.checked));
+  const text = document.createElement('span');
+  text.textContent = 'одноразовая';
+  label.append(box, text);
+  return label;
 }
 
 function renderStoragePill(storage) {
@@ -706,50 +815,25 @@ function renderStorageNotice(storage) {
   notice.append(code, document.createTextNode(' (и обнови значение UPSTASH_BLOB_URL в wrangler.jsonc).'));
 }
 
-function renderTtlGroup(stats = state.stats) {
-  const all = stats?.ttlOptions || [
-    { hours: 1, label: '1 час' },
-    { hours: 24, label: '24 часа' },
-    { hours: 168, label: '7 дней' },
-    { hours: 0, label: 'Навсегда' },
-  ];
+/**
+ * Срок жизни и режим «одноразовая» выбирают после загрузки, поэтому в форме
+ * загрузки остаётся одна подсказка. Гостям добавляем их срок — выбрать его
+ * они не могут, но должны знать, сколько живёт файл.
+ */
+function renderUploadHint(stats = state.stats) {
+  const text = $('#uploadHintText');
+  if (!text) return;
 
-  // Срок выбирают только авторизованные: гостям показываем подсказку вместо
-  // переключателя — выбирать всё равно нечего.
-  const logged = !!state.user;
-  const group = $('#ttlGroup');
-  const hint = $('#ttlHint');
+  const hours = Number(stats?.settings?.anonymousTtlHours ?? 1) || 1;
+  state.ttl = hours;
 
-  if (!logged) {
-    group.replaceChildren();
-    group.hidden = true;
-    hint.hidden = false;
-    const hours = Number(stats?.settings?.anonymousTtlHours ?? 1) || 1;
-    state.ttl = hours;
-    $('#ttlHintText').textContent =
-      `Ссылка живёт ${hours} ${plural(hours, ['час', 'часа', 'часов'])} — потом файл удалится безвозвратно. ` +
-      'Войди, чтобы выбрать другой срок.';
+  if (state.user) {
+    text.textContent = 'Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла.';
     return;
   }
-
-  group.hidden = false;
-  hint.hidden = true;
-  const options = all;
-  state.ttl = Number(stats?.defaultTtlHours ?? 24) || 24;
-
-  for (const opt of options) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.role = 'radio';
-    btn.textContent = opt.label;
-    btn.dataset.hours = String(opt.hours);
-    btn.setAttribute('aria-checked', String(opt.hours === state.ttl));
-    btn.addEventListener('click', () => {
-      state.ttl = opt.hours;
-      $$('#ttlGroup button').forEach((b) => b.setAttribute('aria-checked', String(b === btn)));
-    });
-    group.append(btn);
-  }
+  text.textContent =
+    `Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ` +
+    `Гостям ссылка живёт ${hours} ${plural(hours, ['час', 'часа', 'часов'])}.`;
 }
 
 /* ----------------------------- Загрузка ---------------------------- */
@@ -811,6 +895,8 @@ async function uploadFile(file) {
         ttl: String(state.ttl),
         once: state.once,
         ownerToken,
+        // Вошедшие выбирают срок после загрузки — ссылка появится позже.
+        pendingTtl: !!state.user,
       }),
     });
 
@@ -924,8 +1010,66 @@ function uploadThroughWorker(file, ownerToken, ui) {
 
 function doneItem(sub, fill, data, actions) {
   fill.style.width = '100%';
-  sub.replaceChildren();
-  sub.append(document.createTextNode(`${bytes(data.file.size)} · готово`));
+  sub.textContent = `${bytes(data.file.size)} · файл загружен`;
+  actions.replaceChildren();
+
+  // Ссылка создаётся после выбора: срок — вошедшим, одноразовость — всем.
+  // Гостям срок назначает сервер, поэтому переключатель срока им не показываем.
+  const guest = !state.user;
+  const create = async ({ hours, once }) => {
+    try {
+      const done = await api(`/api/file/${data.file.id}/link`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-owner-token': state.owners[data.file.id] || '',
+        },
+        body: JSON.stringify(guest ? { once } : { hours, once }),
+      });
+      showLink(sub, fill, done, actions);
+      toast(`«${done.file.name}» готов к обмену`, 'ok');
+    } catch (err) {
+      toast(err.message || 'Не удалось создать ссылку', 'err');
+      // Возвращаем выбор, чтобы можно было попробовать ещё раз.
+      actions.replaceChildren(guest ? onceOnly(create) : linkOptions(create));
+    }
+  };
+
+  actions.append(guest ? onceOnly(create) : linkOptions(create));
+}
+
+/** Гость: срок назначен сервером, выбрать можно только одноразовость. */
+function onceOnly(create) {
+  const wrap = document.createElement('div');
+  wrap.className = 'q-ttl';
+
+  const label = document.createElement('span');
+  label.className = 'q-ttl-label';
+  label.textContent = 'срок 1 час';
+  wrap.append(label);
+
+  let once = false;
+  const onceLabel = document.createElement('label');
+  onceLabel.className = 'q-ttl-once';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.addEventListener('change', () => {
+    once = box.checked;
+  });
+  const text = document.createElement('span');
+  text.textContent = 'одноразовая ссылка';
+  onceLabel.append(box, text);
+  wrap.append(onceLabel);
+
+  const go = button('Создать ссылку', 'i-link');
+  go.addEventListener('click', () => create({ once }));
+  wrap.append(go);
+  return wrap;
+}
+
+function showLink(sub, fill, data, actions) {
+  fill.style.width = '100%';
+  sub.textContent = `${bytes(data.file.size)} · готово`;
 
   const link = document.createElement('div');
   link.className = 'q-link';
@@ -943,7 +1087,6 @@ function doneItem(sub, fill, data, actions) {
   open.addEventListener('click', () => window.open(data.links.page, '_blank', 'noopener'));
 
   actions.replaceChildren(link, copy, open);
-  toast(`«${data.file.name}» готов к обмену`, 'ok');
 }
 
 function failItem(sub, fill, message) {
@@ -958,6 +1101,11 @@ function failItem(sub, fill, message) {
 
 /** Очередь с ограничением параллелизма, чтобы не забить канал. */
 async function enqueue(files) {
+  if (state.maintenance) {
+    toast('Технические работы: загрузка временно закрыта', 'err');
+    return;
+  }
+
   const max = state.stats?.maxFiles ?? 4;
   const list = [...files].slice(0, max);
   if (files.length > max) {
@@ -979,11 +1127,14 @@ function initDropzone() {
   const input = $('#fileInput');
   const depth = { current: 0 };
 
-  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('click', () => {
+    if (state.maintenance) return;
+    input.click();
+  });
   zone.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      input.click();
+      if (!state.maintenance) input.click();
     }
   });
 
@@ -1018,10 +1169,6 @@ function initDropzone() {
       if (!zone.contains(e.target)) e.preventDefault();
     }),
   );
-
-  $('#onceToggle').addEventListener('change', (e) => {
-    state.once = e.target.checked;
-  });
 }
 
 /* ----------------------------- Роутер ------------------------------ */

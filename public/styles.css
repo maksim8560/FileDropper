@@ -179,9 +179,9 @@ h3 {
     radial-gradient(42% 42% at 82% 78%, var(--mesh-3), transparent 62%),
     radial-gradient(40% 40% at 24% 84%, var(--mesh-4), transparent 62%);
   filter: blur(30px) saturate(140%);
-  will-change: opacity;
-  /* Только прозрачность: текстура уже готова, пересчёта размытия нет. */
-  animation: breathe 22s ease-in-out infinite alternate;
+  /* Фон неподвижен. Раньше здесь была бесконечная анимация scale: браузер
+     пересчитывал размытие слоя во весь экран на каждом кадре, а поверх него
+     лежат панели со стеклом — отсюда были постоянные подтормаживания. */
 }
 
 [data-theme="light"] .mesh {
@@ -199,12 +199,190 @@ h3 {
 @keyframes breathe {
   from {
     opacity: 0.75;
-    transform: scale(1.04);
   }
   to {
     opacity: 1;
-    transform: scale(1.1);
   }
+}
+
+/* -------------------- Технические работы --------------------- */
+
+/* Баннер технических работ: живёт внутри липкой шапки, поэтому не перекрывает
+   её и остаётся на виду при прокрутке. */
+.maint-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 11px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 176, 32, 0.5);
+  background: linear-gradient(90deg, rgba(255, 176, 32, 0.16), rgba(255, 55, 95, 0.12));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.26);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.maint-banner[hidden] {
+  display: none;
+}
+
+.maint-text {
+  min-width: 0;
+}
+
+.maint-banner strong {
+  color: #ffc043;
+}
+
+.maint-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffc043;
+  box-shadow: 0 0 0 4px rgba(255, 192, 67, 0.18);
+}
+
+/* Заглушка в форме загрузки вместо зоны перетаскивания. */
+.maint-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 44px 24px;
+  border-radius: 20px;
+  border: 1px dashed rgba(255, 192, 67, 0.45);
+  background: rgba(255, 176, 32, 0.07);
+  text-align: center;
+  cursor: not-allowed;
+}
+
+.maint-block[hidden] {
+  display: none;
+}
+
+.maint-block-icon {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  color: #ffc043;
+  background: rgba(255, 192, 67, 0.12);
+}
+
+.maint-block-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Подсказка в форме загрузки: срок и одноразовость выбирают после загрузки.
+   Оранжевая рамка — чтобы взгляд сразу зацепился за неё. */
+.upload-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: 560px;
+  padding: 11px 16px;
+  border: 1px solid color-mix(in srgb, #ff9f0a 38%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, #ff9f0a 11%, transparent);
+  color: var(--text-2);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.25s var(--spring), background 0.2s var(--ease);
+}
+
+.upload-hint:hover {
+  transform: translateY(-2px);
+  background: color-mix(in srgb, #ff9f0a 17%, transparent);
+}
+
+.upload-hint svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  color: #ff9f0a;
+}
+
+/* Подсказка на месте бывших переключателей: срок и одноразовость выбирают
+   после загрузки, в очереди. */
+.options-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.options-hint svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* Переключатель срока для уже загруженного файла. */
+.q-ttl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.q-ttl-label {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-right: 2px;
+}
+
+.q-ttl-btn {
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.q-ttl-btn:hover {
+  background: var(--glass-bg-strong);
+  transform: translateY(-1px);
+}
+
+.q-ttl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.q-ttl-wait {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.q-ttl-once {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.q-ttl-once input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
 }
 
 /* ------------------------------ Стекло -------------------------------- */
