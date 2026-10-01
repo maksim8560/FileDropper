@@ -6,3 +6,4 @@ dist/
 .DS_Store
 # Секреты никогда не в репозитории
 .dev.vars*
+wrangler-dev.*
