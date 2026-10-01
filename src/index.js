@@ -687,6 +687,78 @@ async function handleNotes(request, env, kv, id = null) {
   return fail(405, 'Метод не поддерживается', 'method_not_allowed');
 }
 
+/* --------------------------- контакты --------------------------- */
+
+/**
+ * Контакты внизу главной. Хранятся так же, как заметки, но с коротким значением:
+ * либо ссылка (с неё делаем кликабельный элемент), либо обычный текст.
+ */
+function normalizeContact(body) {
+  const title = String(body?.title ?? '').trim().slice(0, 80);
+  const rawValue = String(body?.value ?? '').trim().slice(0, 300);
+  const kind = body?.kind === 'text' ? 'text' : 'link';
+  if (!title || !rawValue) return null;
+
+  // Ссылку приводим к виду, который безопасно открыть: только http и https.
+  let value = rawValue;
+  if (kind === 'link') {
+    value = /^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue.replace(/^\/+/, '')}`;
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    } catch {
+      return null;
+    }
+  }
+  return { title, value, kind };
+}
+
+async function listContacts(kv) {
+  const { keys } = await kv.list(CONTACT_PREFIX, 100);
+  const contacts = [];
+  for (const key of keys) {
+    const item = await kv.get(key);
+    if (item) contacts.push(item);
+  }
+  return contacts.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** Контакты для главной: без служебных полей и без кувыркающихся ссылок. */
+function publicContacts(kv) {
+  return listContacts(kv).then((list) =>
+    list.map(({ id, title, value, kind }) => ({ id, title, value, kind })),
+  );
+}
+
+async function handleAdminContacts(request, env, kv) {
+  const gate = await requireAdmin(request, env, kv);
+  if (gate.error) return gate.error;
+
+  const id = request.url.match(/\/api\/admin\/contacts\/([a-z0-9]{4,32})$/)?.[1];
+
+  if (id) {
+    if (request.method !== 'DELETE') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+    const key = `${CONTACT_PREFIX}${id}`;
+    if (!(await kv.get(key))) return fail(404, 'Контакт не найден', 'not_found');
+    await kv.del(key);
+    return json({ ok: true, deleted: id });
+  }
+
+  if (request.method === 'GET') return json({ ok: true, contacts: await listContacts(kv) });
+
+  if (request.method === 'POST') {
+    const body = await request.json().catch(() => null);
+    const contact = normalizeContact(body);
+    if (!contact) return fail(400, 'Нужны название и значение контакта', 'bad_contact');
+
+    const item = { id: newId(8), ...contact, createdAt: Date.now() };
+    await kv.put(`${CONTACT_PREFIX}${item.id}`, item);
+    return json({ ok: true, contact: item }, 201);
+  }
+
+  return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+}
+
 /* ------------------------- панель управления ------------------------ */
 
 async function handleAdminSettings(request, env, kv) {
@@ -899,6 +971,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
       ttlOptions: TTL_OPTIONS,
       defaultTtlHours: cfg.defaultTtlHours,
       auth: { enabled: true },
+      contacts: await publicContacts(kv),
     });
   }
 
@@ -934,6 +1007,10 @@ async function handleApi(request, env, url, storage, kv, ctx) {
 
   if (pathname === '/api/admin/subscription') {
     return handleAdminSubscription(request, env, kv, storage, cfg);
+  }
+
+  if (pathname.startsWith('/api/admin/contacts')) {
+    return handleAdminContacts(request, env, kv);
   }
 
   if (pathname === '/api/admin/subscriptions') {
@@ -1599,6 +1676,7 @@ function pluralRu(n, forms) {
 
 const SUB_PREFIX = 'sub/';
 const PAY_PREFIX = 'pay/';
+const CONTACT_PREFIX = 'contacts/';
 
 /** Запись подписки пользователя или null. */
 async function subscriptionOf(kv, userId) {

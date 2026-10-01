@@ -285,6 +285,15 @@
         </section>
 
         <section class="glass notice" id="storageNotice" hidden></section>
+
+        <!-- Низ главной: контакты и права -->
+        <footer class="home-foot">
+          <nav class="home-contacts" id="homeContacts" aria-label="Контакты" hidden></nav>
+
+          <p class="home-rights">
+            <span id="copyYear">2026</span> Файлообменник. Все права защищены.
+          </p>
+        </footer>
       </section>
 
       <!-- ================= Оплата подписки ================= -->
@@ -573,6 +582,41 @@
             </form>
 
             <ul class="note-list" id="noteList" aria-live="polite"></ul>
+
+            <h3 class="admin-sub">Контакты внизу главной</h3>
+            <p class="muted profile-note">
+              Показываются в самом низу главной страницы. Ссылку можно добавить как ссылку, остальное — обычным
+              текстом. Хранятся рядом с заметками — ключи <code>contacts/</code>.
+            </p>
+
+            <form class="admin-form" id="contactForm">
+              <div class="admin-row">
+                <label class="field">
+                  <span>Название</span>
+                  <input type="text" id="contactTitle" placeholder="Например: Телеграм" maxlength="80" />
+                </label>
+                <label class="field">
+                  <span>Вид</span>
+                  <select id="contactKind">
+                    <option value="link">Ссылка</option>
+                    <option value="text">Текст</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Значение</span>
+                <input type="text" id="contactValue" placeholder="https://t.me/… или @имя_канала" maxlength="300" />
+                <small class="field-hint">Для ссылки можно написать без https:// — добавим сами</small>
+              </label>
+              <div class="admin-form-actions">
+                <button class="btn btn-primary" type="submit">
+                  <svg><use href="#i-check" /></svg>
+                  Добавить контакт
+                </button>
+              </div>
+            </form>
+
+            <ul class="note-list" id="contactList" aria-live="polite"></ul>
           </div>
 
           <div class="profile-actions">

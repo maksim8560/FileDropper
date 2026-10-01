@@ -571,6 +571,7 @@ async function loadAdminPanel() {
     }
 
     await loadNotes();
+    await loadContacts();
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -715,6 +716,25 @@ function initAdmin() {
     }
   });
 
+  $('#contactForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = $('#contactTitle').value.trim();
+    const value = $('#contactValue').value.trim();
+    const kind = $('#contactKind').value;
+    if (!title || !value) return toast('Заполни название и значение', 'err');
+
+    try {
+      await api('/api/admin/contacts', { method: 'POST', body: { title, value, kind } });
+      $('#contactTitle').value = '';
+      $('#contactValue').value = '';
+      toast('Контакт добавлен', 'ok');
+      await loadContacts();
+      loadStats();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
   $('#noteForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const payload = { title: $('#noteTitle').value.trim(), text: $('#noteText').value };
@@ -770,6 +790,9 @@ async function loadStats() {
 
     $('#statFiles').textContent = stats.listed ? String(stats.files) : '—';
     $('#statToday').textContent = Number.isFinite(stats.filesToday) ? String(stats.filesToday) : '—';
+    renderContacts(stats.contacts);
+    const year = $('#copyYear');
+    if (year) year.textContent = String(new Date().getFullYear());
     $('#statSize').textContent = `${stats.maxFileSizeMb} МБ`;
     $('#statBackend').textContent = stats.storage.degraded ? 'в памяти' : 'в облаке';
     $('#limitsHint').textContent = `До ${stats.maxFileSizeMb} МБ на файл · до ${stats.maxFiles ?? 4} файлов за раз`;
@@ -1110,6 +1133,86 @@ async function watchPayment() {
     await new Promise((r) => setTimeout(r, 1500));
   }
   toast('Оплата ещё обрабатывается — обнови страницу через минуту', 'info');
+}
+
+/** Контакты внизу главной: приходят с сервера вместе со статистикой. */
+/** Контакты в панели управления: список с удалением. */
+async function loadContacts() {
+  const box = $('#contactList');
+  if (!box) return;
+
+  const data = await api('/api/admin/contacts');
+  box.replaceChildren();
+
+  if (!data.contacts.length) {
+    const empty = document.createElement('li');
+    empty.className = 'muted empty-note';
+    empty.textContent = 'Контактов пока нет — добавь первый, он появится внизу главной.';
+    box.append(empty);
+    return;
+  }
+
+  for (const item of data.contacts) {
+    const li = document.createElement('li');
+    li.className = 'note-item';
+
+    const body = document.createElement('div');
+    body.className = 'note-body';
+    const title = document.createElement('b');
+    title.textContent = item.title;
+    const value = document.createElement('small');
+    value.textContent = item.value;
+    body.append(title, value);
+
+    const del = button('Удалить', 'i-trash-sm', 'btn btn-sm btn-danger');
+    del.addEventListener('click', async () => {
+      try {
+        await api(`/api/admin/contacts/${item.id}`, { method: 'DELETE' });
+        toast('Контакт удалён', 'ok');
+        await loadContacts();
+        loadStats();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+
+    li.append(body, del);
+    box.append(li);
+  }
+}
+
+/** Контакты внизу главной: приходят с сервера вместе со статистикой. */
+function renderContacts(contacts) {
+  const box = $('#homeContacts');
+  if (!box) return;
+
+  const list = Array.isArray(contacts) ? contacts : [];
+  box.replaceChildren();
+  box.hidden = list.length === 0;
+
+  for (const item of list) {
+    if (item.kind === 'link') {
+      const a = document.createElement('a');
+      a.className = 'home-contact';
+      a.href = item.value;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.append(document.createTextNode(item.title));
+      const hint = document.createElement('small');
+      hint.textContent = item.value;
+      a.append(hint);
+      box.append(a);
+      continue;
+    }
+
+    const span = document.createElement('span');
+    span.className = 'home-contact is-text';
+    span.append(document.createTextNode(item.title));
+    const hint = document.createElement('small');
+    hint.textContent = item.value;
+    span.append(hint);
+    box.append(span);
+  }
 }
 
 function renderStoragePill(storage) {
@@ -1690,10 +1793,16 @@ function currentFileId() {
 }
 
 function route() {
-  $('#view-home').hidden = true;
-  $('#view-file').hidden = true;
-  $('#view-profile').hidden = true;
-  $('#view-pay').hidden = true;
+  // Разметка и скрипт могли разъехаться по версии (старый кэш вкладки):
+  // тогда какого-то блока просто нет, и это не повод ронять всю страницу.
+  const show = (id) => {
+    const view = $(id);
+    if (view) view.hidden = true;
+  };
+  show('#view-home');
+  show('#view-file');
+  show('#view-profile');
+  show('#view-pay');
 
   if (location.hash.startsWith('#/pay')) {
     // Страница оплаты: без входа её не открыть — платить нечем.
@@ -1704,16 +1813,24 @@ function route() {
       return;
     }
     payStop();
-    $('#view-pay').hidden = false;
+    const view = $('#view-pay');
+    if (!view) return;
+    view.hidden = false;
     loadBilling().then(renderSubscription);
-  } else if (location.hash.startsWith('#/profile')) {
-    $('#view-profile').hidden = false;
-    renderProfile();
-  } else {
-    const id = currentFileId();
-    if (id) showFile(id);
-    else showHome();
+    return;
   }
+
+  if (location.hash.startsWith('#/profile')) {
+    const view = $('#view-profile');
+    if (!view) return;
+    view.hidden = false;
+    renderProfile();
+    return;
+  }
+
+  const id = currentFileId();
+  if (id) showFile(id);
+  else showHome();
 }
 
 /* ------------------------------ Старт ------------------------------ */
@@ -1722,13 +1839,24 @@ function init() {
   // Пока не пришли ни настройки, ни сессия, показываем «глухую» страницу:
   // иначе при перезагрузке мелькают кнопки входа и зона загрузки.
   document.documentElement.classList.add('booting');
+  // Страховка: даже если что-то сломается, кнопки и форма должны появиться.
+  setTimeout(() => document.documentElement.classList.remove('booting'), 5000);
 
-  initTheme();
-  initDropzone();
-  initAuth();
-  initAdmin();
-  renderAuth();
-  route();
+  // Каждый кусок включаем отдельно: один сбойный не должен гасить остальной.
+  const step = (name, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`${name} не запустился:`, err);
+    }
+  };
+
+  step('тема', initTheme);
+  step('загрузка файлов', initDropzone);
+  step('вход', initAuth);
+  step('панель управления', initAdmin);
+  step('шапка', renderAuth);
+  step('страница', route);
 
   addEventListener('popstate', route);
   addEventListener('hashchange', route);
@@ -1752,7 +1880,7 @@ function init() {
   });
 
   // Вернулся с оплаты: ждём, пока подписка появится.
-  watchPayment();
+  step('возврат с оплаты', watchPayment);
 
   setInterval(() => {
     if (!$('#view-home').hidden) loadStats();

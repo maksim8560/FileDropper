@@ -293,6 +293,64 @@ html.booting #maintBanner {
   height: 26px;
 }
 
+/* --------------------- Низ главной: контакты и права --------------------- */
+
+.home-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 26px 8px 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.home-contacts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 26px;
+  width: 100%;
+}
+
+.home-contacts[hidden] {
+  display: none;
+}
+
+.home-contact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 16px;
+  border-radius: 16px;
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 0.2s var(--ease), background 0.2s var(--ease);
+}
+
+.home-contact:hover {
+  transform: translateY(-2px);
+  background: var(--fill-soft);
+}
+
+.home-contact small {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  word-break: break-all;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-rights {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  text-align: center;
+}
+
 /* --------------------------- Страница оплаты --------------------------- */
 
 .pay-wrap {
