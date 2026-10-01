@@ -10,5 +10,5 @@
  * Иначе используется то, что записано здесь.
  */
 window.FILEX = {
-  apiBase: 'https://maxdiway.savin-maksim952.workers.dev',
+  apiBase: 'https://filedropper-api.sonora-online.workers.dev',
 };

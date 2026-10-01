@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "maxdiway",
+  "name": "filedropper-api",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
 
@@ -21,7 +21,7 @@
 
   "vars": {
     "UPSTASH_BLOB_URL": "https://b73d6d33dd84.blob.upstash.io",
-    "PUBLIC_API_ORIGIN": "https://maxdiway.savin-maksim952.workers.dev",
+    "PUBLIC_API_ORIGIN": "https://filedropper-api.sonora-online.workers.dev",
     "MAX_FILE_SIZE_MB": "500",
     "MAX_FILES_PER_UPLOAD": "4",
     "DEFAULT_TTL_HOURS": "24",
