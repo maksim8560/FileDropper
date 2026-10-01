@@ -172,50 +172,46 @@ h3 {
 
 .mesh {
   position: absolute;
-  inset: -16%;
+  inset: -12%;
   background:
     radial-gradient(38% 38% at 18% 22%, var(--mesh-1), transparent 62%),
     radial-gradient(32% 32% at 78% 14%, var(--mesh-2), transparent 62%),
     radial-gradient(42% 42% at 82% 78%, var(--mesh-3), transparent 62%),
     radial-gradient(40% 40% at 24% 84%, var(--mesh-4), transparent 62%);
-  filter: blur(44px) saturate(140%);
-  /* Слой кэшируется в отдельную текстуру: иначе браузер пересчитывает
-     тяжёлое размытие на каждом кадре и первый экран «идёт» рывками. */
-  will-change: transform;
-  transform: translateZ(0);
-  animation: drift 28s ease-in-out infinite alternate;
+  filter: blur(30px) saturate(140%);
+  will-change: opacity;
+  /* Только прозрачность: текстура уже готова, пересчёта размытия нет. */
+  animation: breathe 22s ease-in-out infinite alternate;
 }
 
 [data-theme="light"] .mesh {
-  filter: blur(52px) saturate(160%);
-  opacity: 0.75;
+  filter: blur(34px) saturate(160%);
+  opacity: 0.7;
 }
 
 .grain {
   position: absolute;
   inset: 0;
   opacity: var(--grain-opacity);
-  mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-@keyframes drift {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
+@keyframes breathe {
+  from {
+    opacity: 0.75;
+    transform: scale(1.04);
   }
-  50% {
-    transform: translate3d(2.5%, -3%, 0) scale(1.08);
-  }
-  100% {
-    transform: translate3d(-2%, 3.5%, 0) scale(1.04);
+  to {
+    opacity: 1;
+    transform: scale(1.1);
   }
 }
 
 /* ------------------------------ Стекло -------------------------------- */
 .glass {
   background: var(--glass-bg);
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
   border: 1px solid var(--glass-stroke);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-highlight);
@@ -351,7 +347,7 @@ main {
 
 .pill[data-state="ok"] .dot {
   background: var(--green);
-  animation: pulse 2.6s ease-out infinite;
+  animation: pulse 4s ease-out infinite;
 }
 .pill[data-state="warn"] .dot {
   background: #ff9f0a;
@@ -421,13 +417,6 @@ main {
   background-clip: text;
   color: transparent;
   background-size: 200% 100%;
-  animation: sheen 9s ease-in-out infinite alternate;
-}
-
-@keyframes sheen {
-  to {
-    background-position: 100% 50%;
-  }
 }
 
 .lede {
@@ -454,8 +443,6 @@ main {
   border-radius: 999px;
   border: 1px solid var(--glass-stroke);
   background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   font-size: 0.86rem;
   color: var(--text-2);
   transition: transform 0.3s var(--spring), color 0.2s var(--ease);
@@ -482,8 +469,6 @@ main {
   border: 1px solid var(--glass-stroke);
   border-radius: 999px;
   background: var(--glass-bg-strong);
-  backdrop-filter: blur(22px) saturate(180%);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
   box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
   font-weight: 600;
   font-size: 0.95rem;
@@ -623,8 +608,6 @@ main {
   border-radius: 999px;
   border: 1px solid var(--glass-stroke);
   background: var(--fill-soft);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 .segmented button {
@@ -879,8 +862,6 @@ main {
   border: 1px solid var(--glass-stroke);
   border-radius: 999px;
   background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow: var(--shadow-sm), inset 0 1px 0 var(--glass-highlight);
   cursor: pointer;
   transition: transform 0.25s var(--spring), background 0.25s var(--ease);
@@ -1236,8 +1217,8 @@ main {
   position: absolute;
   inset: 0;
   background: rgba(5, 5, 10, 0.55);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   animation: fade-in 0.3s var(--ease) both;
 }
 
@@ -1434,8 +1415,6 @@ main {
   border-radius: 50%;
   border: 1px solid var(--glass-stroke);
   background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   box-shadow: inset 0 1px 0 var(--glass-highlight), 0 0 0 8px color-mix(in srgb, var(--accent) 7%, transparent);
   font-size: 1.02rem;
   font-weight: 700;
@@ -1556,8 +1535,6 @@ main {
   border-radius: 999px;
   border: 1px solid var(--glass-stroke);
   background: var(--glass-bg);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
   font-size: 0.88rem;
   color: var(--text-2);
   transition: transform 0.25s var(--spring), color 0.2s var(--ease);
@@ -1700,8 +1677,6 @@ main {
   border-radius: var(--r-md);
   border: 1px solid var(--glass-stroke);
   background: var(--glass-bg-strong);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-highlight);
   font-size: 0.88rem;
   animation: toast-in 0.4s var(--spring) both;
