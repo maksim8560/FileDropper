@@ -1,0 +1,16 @@
+{
+  "name": "file-exchanger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Файлообменник — сервис обмена файлами в стиле Apple Glass на Cloudflare Workers + Upstash Blob",
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "Файлообменник — FileDropper",
+  "short_name": "FileDropper",
+  "description": "Файлообменник: загрузи файл, получи ссылку за секунду. Без карт, регистрации и смс.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#05050a",
+  "theme_color": "#0b0b10",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

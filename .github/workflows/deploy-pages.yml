@@ -1,0 +1,42 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Адрес Worker'а с API. Если переменная WORKER_URL в репозитории не задана,
+      # берём значение, закоммиченное в public/config.js.
+      - name: Вписать адрес API
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+        run: |
+          if [ -n "$WORKER_URL" ]; then
+            echo "window.FILEX = { apiBase: '$WORKER_URL' };" > public/config.js
+          fi
+          echo "apiBase: $(grep -o "apiBase: '[^']*'" public/config.js)"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4

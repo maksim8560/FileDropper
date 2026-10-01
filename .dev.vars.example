@@ -1,0 +1,4 @@
+# Скопируйте в .dev.vars и впишите реальный токен из консоли Upstash (раздел Blob).
+# Для продакшена: npx wrangler secret put UPSTASH_BLOB_TOKEN
+UPSTASH_BLOB_TOKEN=""
+UPSTASH_BLOB_URL="https://b2e0533cedea.blob.upstash.io"
