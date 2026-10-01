@@ -96,6 +96,55 @@ const TTL_OPTIONS = [
 ];
 const TTL_HOURS_ALLOWED = TTL_OPTIONS.map((o) => o.hours);
 
+/* --------------------- Платёжная система (провайдеры) --------------------- */
+
+/**
+ * Провайдеры приёма оплаты. У всех один и тот же контракт, поэтому смена
+ * платёжной системы — это выбор в панели, а не правка кода.
+ *
+ *   manual        — оплаты нет, подписку выдаёт админ (по умолчанию);
+ *   cloudpayments — редирект на страницу CloudPayments;
+ *   h2h           — QR внутри нашей страницы: провайдер отдаёт реквизиты
+ *                   (СБП, карта или крипта), а статус мы опрашиваем сами.
+ */
+const PAYMENT_PROVIDERS = {
+  manual: { label: 'Без онлайн-оплаты, вручную', needsSecret: false },
+  cloudpayments: { label: 'CloudPayments', needsSecret: true },
+  h2h: { label: 'QR внутри сайта: СБП, карта, крипта', needsSecret: true },
+};
+
+function providerOf(cfg) {
+  return PAYMENT_PROVIDERS[cfg.settings.subProvider] ? cfg.settings.subProvider : 'manual';
+}
+
+function providerReady(env, cfg) {
+  if (providerOf(cfg) === 'cloudpayments') return cloudpaymentsConfigured(env);
+  if (providerOf(cfg) === 'h2h') return h2hConfigured(env);
+  return false;
+}
+
+/** Что показывать панели и кабинету о платёжной системе. */
+function paymentInfo(env, cfg) {
+  return {
+    provider: providerOf(cfg),
+    providers: Object.entries(PAYMENT_PROVIDERS).map(([id, p]) => ({ id, label: p.label })),
+    ready: providerReady(env, cfg),
+  };
+}
+
+/** Заказ на оплату: сумма, кому и на сколько. */
+function orderPayload(cfg, session, invoiceId) {
+  return {
+    invoiceId,
+    amountRub: clamp(Number(cfg.settings.subPriceRub), 0, 1000000),
+    periodDays: clamp(Number(cfg.settings.subPeriodDays), 1, 365),
+    maxTtlDays: clamp(Number(cfg.settings.subMaxTtlDays), 1, 365),
+    description: 'Подписка Файлообменника',
+    accountId: session.userId,
+    username: session.username,
+  };
+}
+
 /* ------------------------ CloudPayments ------------------------ */
 
 /**
@@ -133,6 +182,68 @@ async function cloudpayments(env, path, { method = 'GET', query = null, body = n
 
 function cloudpaymentsConfigured(env) {
   return !!(String(env.CLOUDPAYMENTS_PUBLIC_ID || '').trim() && String(env.CLOUDPAYMENTS_SECRET_KEY || '').trim());
+}
+
+/* ------------------------------ H2H ------------------------------ */
+
+/**
+ * Провайдер «реквизиты по запросу»: он отдаёт QR и ссылку, а оплату мы
+ * подтверждаем опросом статуса — вебхук у таких сервисов часто отсутствует.
+ * Все три адреса задаются в панели, поэтому подходит любой сервис с таким
+ * контрактом, а код менять не нужно.
+ */
+const H2H_PATHS = {
+  create: '/orders',
+  requisites: '/orders/{id}/requisites',
+  status: '/orders/{id}',
+};
+
+function h2hConfigured(env) {
+  return !!(String(env.H2H_BASE_URL || '').trim() && String(env.H2H_API_KEY || '').trim());
+}
+
+async function h2h(env, path, { method = 'GET', body = null } = {}) {
+  const base = String(env.H2H_BASE_URL || '').replace(/\/+$/, '');
+  const key = String(env.H2H_API_KEY || '').trim();
+  if (!base || !key) return { configured: false, ok: false, error: 'Платёжная система не подключена' };
+
+  let res;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    return { configured: true, ok: false, error: `Сеть недоступна: ${err?.message || err}` };
+  }
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    return { configured: true, ok: false, error: data?.message || data?.error || `Провайдер ответил ${res.status}` };
+  }
+  return { configured: true, ok: true, data };
+}
+
+/** Нормализуем ответ провайдера в наш вид: статус, QR, ссылка, сумма. */
+function normalizeH2h(data, fallbackAmount) {
+  const row = data?.order || data || {};
+  const rawStatus = String(row.status || data?.status || '').toLowerCase();
+
+  let status = 'preparing';
+  if (['paid', 'completed', 'success', 'succeeded'].includes(rawStatus)) status = 'paid';
+  else if (['ready', 'pending', 'waiting', 'qr', 'created'].includes(rawStatus)) {
+    status = row.qr || row.qr_data || row.qr_url || row.requisite ? 'ready' : 'preparing';
+  }
+
+  return {
+    status,
+    qr: row.qr || row.qr_data || row.requisite || row.requisites || null,
+    qrImage: row.qr_image || row.qrImage || row.qr_url || null,
+    paymentUrl: row.payment_url || row.paymentUrl || row.redirect_url || row.link || null,
+    amount: Number(row.amount ?? fallbackAmount) || fallbackAmount,
+    providerMessage: row.provider_message || row.message || null,
+  };
 }
 
 /**
@@ -192,6 +303,8 @@ const DEFAULT_SETTINGS = {
   subPeriodDays: 30,
   subMaxTtlDays: 30,
   subFreeTtlHours: 24,
+  // Платёжная система. По умолчанию оплаты нет: подписку выдаёт админ.
+  subProvider: 'manual',
 };
 
 /**
@@ -605,6 +718,7 @@ async function handleAdminSettings(request, env, kv) {
   if (body.subPeriodDays !== undefined) patch.subPeriodDays = clamp(Number(body.subPeriodDays), 1, 365);
   if (body.subMaxTtlDays !== undefined) patch.subMaxTtlDays = clamp(Number(body.subMaxTtlDays), 1, 365);
   if (body.subFreeTtlHours !== undefined) patch.subFreeTtlHours = clamp(Number(body.subFreeTtlHours), 1, 24 * 31);
+  if (body.subProvider !== undefined && PAYMENT_PROVIDERS[body.subProvider]) patch.subProvider = body.subProvider;
 
   const settings = await writeSettings(kv, patch, gate.session.username);
   return json({ ok: true, settings });
@@ -1234,20 +1348,25 @@ async function billingState(kv, env, cfg, session) {
       periodDays: clamp(Number(cfg.settings.subPeriodDays), 1, 365),
       maxTtlDays: clamp(Number(cfg.settings.subMaxTtlDays), 1, 365),
       freeTtlHours: clamp(Number(cfg.settings.subFreeTtlHours ?? 24), 1, 24 * 31),
-      paymentConfigured: cloudpaymentsConfigured(env),
+      ...paymentInfo(env, cfg),
     },
     ttl: ttlOptionsFor(cfg, { guest, subscribed: active }),
   };
 }
 
 /**
- * Подписка: оплата через CloudPayments.
+ * Подписка: создание заказа, реквизиты и статус. Провайдер выбран в панели.
  *
- *   status   — состояние подписки (вход обязателен);
- *   checkout — создаёт заказ и отдаёт ссылку на оплату;
- *   webhook  — уведомление CloudPayments: сверяем платёж их же API и включаем подписку.
+ *   checkout    — создать заказ (вход обязателен);
+ *   requisites  — реквизиты для оплаты: QR, ссылка, сумма;
+ *   status      — проверить, оплачено ли (страница оплаты спрашивает сама);
+ *   webhook     — уведомление провайдера, если он его шлёт.
  */
 async function handleBilling(request, env, kv, storage, cfg, url, action) {
+  const session = action === 'webhook' ? null : await readSession(kv, request);
+  const provider = providerOf(cfg);
+
+  /* --- вебхук: провайдер сообщает об оплате сам --- */
   if (action === 'webhook') {
     if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
 
@@ -1255,79 +1374,210 @@ async function handleBilling(request, env, kv, storage, cfg, url, action) {
     if (!note?.invoiceId) return json({ ok: true });
     if (note.status && note.status.toLowerCase() !== 'completed') return json({ ok: true });
 
-    // Сверяем по API CloudPayments: свой вебхук никому нельзя подделать.
-    const check = await cloudpayments(env, '/payments/find', {
-      method: 'POST',
-      body: { InvoiceId: note.invoiceId },
+    // Сверяем у CloudPayments её же API: свой вебхук никому нельзя подделать.
+    if (provider === 'cloudpayments') {
+      const check = await cloudpayments(env, '/payments/find', {
+        method: 'POST',
+        body: { InvoiceId: note.invoiceId },
+      });
+      if (!check.configured) return json({ ok: true });
+      if (!check.ok || check.data?.Status !== 'Completed') return json({ ok: true });
+
+      const userId = String(check.data.AccountId || note.accountId || '');
+      const orderId = String(check.data.TransactionId ?? check.data.Id ?? note.invoiceId);
+      const amountRub = Number(check.data.Amount) || null;
+      const days = Number(check.data.Data?.periodDays ?? cfg.settings.subPeriodDays);
+      const done = await settleOrder(storage, kv, cfg, invoiceUserId(check.data.Data?.userId, userId), {
+        invoiceId: note.invoiceId,
+        orderId,
+        amountRub,
+        days,
+        source: 'cloudpayments',
+      });
+      return json({ ok: true, ...done });
+    }
+
+    // Универсальный вид: { order_id, status, account_id }
+    const userId = String(note.accountId || '');
+    const done = await settleOrder(storage, kv, cfg, userId, {
+      invoiceId: note.invoiceId,
+      orderId: note.invoiceId,
+      amountRub: note.amount,
+      days: cfg.settings.subPeriodDays,
+      source: provider,
     });
-    if (!check.configured) return json({ ok: true });
-    if (!check.ok || check.data?.Status !== 'Completed') return json({ ok: true });
-
-    const userId = String(check.data.AccountId || note.accountId || '');
-    if (!userId) return json({ ok: true });
-
-    const user = await kv.get(`${USER_PREFIX}${userId}`);
-    if (!user) return json({ ok: true });
-
-    // Повторное уведомление о том же платеже не должен продлевать подписку дважды.
-    const orderId = String(check.data.TransactionId ?? check.data.Id ?? note.invoiceId);
-    const sub = await subscriptionOf(kv, userId);
-    if (sub?.orderId === orderId) return json({ ok: true, duplicate: true });
-
-    const result = await activateSubscription(storage, kv, cfg, user, {
-      days: Number(check.data.Data?.periodDays ?? cfg.settings.subPeriodDays),
-      orderId,
-      amountRub: Number(check.data.Amount) || null,
-      source: 'cloudpayments',
-    });
-
-    return json({ ok: true, activated: true, expiresAt: result.record.expiresAt, restored: result.restored });
+    return json({ ok: true, ...done });
   }
 
-  const session = await readSession(kv, request);
   if (!session) return fail(401, 'Войдите в аккаунт', 'unauthorized');
 
   if (action === 'status') {
     return json(await billingState(kv, env, cfg, session));
   }
 
+  /* --- создание заказа --- */
   if (action === 'checkout') {
     if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
     if (!cfg.settings.subEnabled) return fail(403, 'Оплата подписки сейчас выключена', 'sub_disabled');
-    if (!cloudpaymentsConfigured(env)) {
+    if (provider === 'manual') {
+      return fail(403, 'Онлайн-оплата выключена: подписку выдаёт администратор', 'provider_manual');
+    }
+    if (!providerReady(env, cfg)) {
       return fail(503, 'Платёжная система не подключена — обратитесь к администратору', 'payment_not_configured');
     }
 
-    const price = clamp(Number(cfg.settings.subPriceRub), 0, 1000000);
-    const periodDays = clamp(Number(cfg.settings.subPeriodDays), 1, 365);
-    const maxDays = clamp(Number(cfg.settings.subMaxTtlDays), 1, 365);
     const invoiceId = `sub-${session.userId}-${Date.now()}`;
+    const order = orderPayload(cfg, session, invoiceId);
 
-    const created = await cloudpayments(env, '/orders/create', {
+    if (provider === 'cloudpayments') {
+      const created = await cloudpayments(env, '/orders/create', {
+        method: 'POST',
+        requestId: invoiceId,
+        body: {
+          Amount: order.amountRub.toFixed(2),
+          Currency: 'RUB',
+          Description: order.description,
+          InvoiceId: invoiceId,
+          AccountId: session.userId,
+          SendEmail: false,
+          Culture: 'ru-RU',
+          Data: { userId: session.userId, periodDays: String(order.periodDays) },
+        },
+      });
+      if (!created.configured) return fail(503, 'Платёжная система не подключена', 'payment_not_configured');
+      if (!created.ok) return fail(502, created.error || 'Платёжная система не ответила', 'payment_error');
+
+      const paymentUrl = created.data?.PaymentUrl || created.data?.paymentUrl || null;
+      if (!paymentUrl) return fail(502, 'Платёжная система не вернула ссылку на оплату', 'payment_error');
+
+      await kv.put(`${PAY_PREFIX}${invoiceId}`, { ...order, provider, createdAt: Date.now() });
+      return json({ ok: true, provider, invoiceId, paymentUrl, amountRub: order.amountRub, periodDays: order.periodDays });
+    }
+
+    /* --- H2H: QR внутри нашей страницы --- */
+    const created = await h2h(env, H2H_PATHS.create, {
       method: 'POST',
-      requestId: invoiceId,
       body: {
-        Amount: price.toFixed(2),
-        Currency: 'RUB',
-        Description: `Подписка Файлообменника: срок ссылок до ${maxDays} дней на ${periodDays} дней`,
-        InvoiceId: invoiceId,
-        AccountId: session.userId,
-        SendEmail: false,
-        Culture: 'ru-RU',
-        Data: { userId: session.userId, periodDays: String(periodDays) },
+        invoice_id: invoiceId,
+        amount: order.amountRub.toFixed(2),
+        currency: 'RUB',
+        description: order.description,
+        account_id: session.userId,
+        metadata: { userId: session.userId, username: session.username, periodDays: String(order.periodDays) },
       },
     });
-
     if (!created.configured) return fail(503, 'Платёжная система не подключена', 'payment_not_configured');
     if (!created.ok) return fail(502, created.error || 'Платёжная система не ответила', 'payment_error');
 
-    const paymentUrl = created.data?.PaymentUrl || created.data?.paymentUrl || null;
-    if (!paymentUrl) return fail(502, 'Платёжная система не вернула ссылку на оплату', 'payment_error');
+    const norm = normalizeH2h(created.data, order.amountRub);
+    const remoteId = String(created.data?.order?.id ?? created.data?.id ?? invoiceId);
+    await kv.put(
+      `${PAY_PREFIX}${invoiceId}`,
+      { ...order, provider, remoteId, status: norm.status, createdAt: Date.now() },
+    );
 
-    return json({ ok: true, paymentUrl, invoiceId, amountRub: price, periodDays });
+    return json({
+      ok: true,
+      provider,
+      invoiceId,
+      remoteId,
+      amountRub: order.amountRub,
+      periodDays: order.periodDays,
+      requisites: norm,
+    });
+  }
+
+  /* --- реквизиты для нашей страницы оплаты --- */
+  if (action === 'requisites' || action === 'order') {
+    const invoiceId = url.searchParams.get('invoice') || '';
+    const order = invoiceId ? await kv.get(`${PAY_PREFIX}${invoiceId}`) : null;
+    if (!order) return fail(404, 'Заказ не найден', 'order_not_found');
+
+    // Чужой заказ не показываем: привязываем к владельцу сессии.
+    if (order.accountId && order.accountId !== session.userId) {
+      return fail(403, 'Это не ваш заказ', 'forbidden');
+    }
+
+    // Уже оплачено — просто подтверждаем.
+    if (order.status === 'paid') {
+      return json({ ok: true, status: 'paid', invoiceId, amountRub: order.amountRub });
+    }
+
+    if (order.provider === 'h2h') {
+      const path = action === 'requisites'
+        ? H2H_PATHS.requisites.replace('{id}', encodeURIComponent(order.remoteId || order.invoiceId))
+        : H2H_PATHS.status.replace('{id}', encodeURIComponent(order.remoteId || order.invoiceId));
+
+      const got = await h2h(env, path);
+      if (!got.configured) return fail(503, 'Платёжная система не подключена', 'payment_not_configured');
+      if (!got.ok) return json({ ok: true, status: 'preparing', message: got.error });
+
+      const norm = normalizeH2h(got.data, order.amountRub);
+      if (norm.status === 'paid') {
+        const done = await settleOrder(storage, kv, cfg, order.accountId, {
+          invoiceId: order.invoiceId,
+          orderId: order.remoteId || order.invoiceId,
+          amountRub: norm.amount,
+          days: order.periodDays,
+          source: 'h2h',
+        });
+        return json({ ok: true, status: 'paid', invoiceId, ...done });
+      }
+
+      await kv.put(`${PAY_PREFIX}${order.invoiceId}`, { ...order, status: norm.status, checkedAt: Date.now() });
+      return json({ ok: true, invoiceId, ...norm });
+    }
+
+    // Для CloudPayments редиректом: просто отдаём сохранённую ссылку.
+    return json({
+      ok: true,
+      status: order.status || 'ready',
+      invoiceId,
+      paymentUrl: order.paymentUrl ?? null,
+      amountRub: order.amountRub,
+    });
   }
 
   return fail(404, 'Неизвестный метод оплаты', 'not_found');
+}
+
+/** Идентификатор пользователя из данных заказа: разные провайдеры кладут его по-разному. */
+function invoiceUserId(fromData, fallback) {
+  return String(fromData || fallback || '');
+}
+
+/**
+ * Подтверждаем оплату и включаем подписку. Повторный вызов с тем же заказом
+ * ничего не делает — продлить дважды нельзя.
+ */
+async function settleOrder(storage, kv, cfg, userId, { invoiceId, orderId, amountRub, days, source }) {
+  if (!userId) return { activated: false, reason: 'no_user' };
+
+  const user = await kv.get(`${USER_PREFIX}${userId}`);
+  if (!user) return { activated: false, reason: 'user_not_found' };
+
+  const order = invoiceId ? await kv.get(`${PAY_PREFIX}${invoiceId}`) : null;
+  if (order?.status === 'paid') return { activated: false, duplicate: true, expiresAt: order.paidAt };
+
+  // Тот же платёж уже зачислен — не продлеваем второй раз.
+  const sub = await subscriptionOf(kv, userId);
+  if (sub?.orderId && sub.orderId === orderId) {
+    if (order) await kv.put(`${PAY_PREFIX}${invoiceId}`, { ...order, status: 'paid', paidAt: Date.now() });
+    return { activated: false, duplicate: true, expiresAt: sub.expiresAt };
+  }
+
+  const result = await activateSubscription(storage, kv, cfg, user, { days, orderId, amountRub, source });
+  if (invoiceId) {
+    await kv.put(`${PAY_PREFIX}${invoiceId}`, {
+      ...(order || {}),
+      invoiceId,
+      accountId: userId,
+      status: 'paid',
+      paidAt: Date.now(),
+      source,
+    });
+  }
+  return { activated: true, expiresAt: result.record.expiresAt, restored: result.restored };
 }
 
 /** Дата по UTC в формате YYYY-MM-DD: под неё копим счётчик загрузок. */
@@ -1348,6 +1598,7 @@ function pluralRu(n, forms) {
 /* ----------------------------- подписка ----------------------------- */
 
 const SUB_PREFIX = 'sub/';
+const PAY_PREFIX = 'pay/';
 
 /** Запись подписки пользователя или null. */
 async function subscriptionOf(kv, userId) {

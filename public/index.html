@@ -287,7 +287,82 @@
         <section class="glass notice" id="storageNotice" hidden></section>
       </section>
 
-      <!-- ================= Личный кабинет ================= -->
+      <!-- ================= Оплата подписки ================= -->
+    <section class="view" id="view-pay" hidden>
+      <div class="pay-wrap">
+        <div class="pay-card glass">
+          <div class="pay-side">
+            <span class="pay-kicker">Безопасная оплата</span>
+            <h1 class="pay-headline">Остался один шаг</h1>
+            <p class="muted">
+              Оплатите удобным способом и не закрывайте страницу, пока платёж не подтвердится.
+            </p>
+
+            <dl class="pay-order">
+              <div><dt>Подписка</dt><dd id="payPlan">—</dd></div>
+              <div><dt>К оплате</dt><dd class="pay-sum" id="payAmount">—</dd></div>
+              <div><dt>Номер заказа</dt><dd id="payOrderId">создаётся…</dd></div>
+            </dl>
+            <p class="muted pay-note">
+              Доступ выдастся после подтверждения платежа. Если подписка уже была, срок прибавится к текущему.
+            </p>
+          </div>
+
+          <div class="pay-main">
+            <div class="pay-stage" id="payStage">
+              <span class="pay-step">01</span>
+              <div>
+                <strong id="payStageTitle">Готовим платёж</strong>
+                <p class="muted" id="payStageText">Создаём заказ и ждём реквизиты…</p>
+              </div>
+            </div>
+
+            <div class="pay-block" id="payLoading" hidden>
+              <span class="spinner" aria-hidden="true"></span>
+              <p class="muted">Ждём реквизиты от платёжной системы…</p>
+            </div>
+
+            <div class="pay-block" id="payQrBlock" hidden>
+              <span class="pay-chip" id="payMethod">QR-код</span>
+              <h2 class="pay-title">Оплатите по QR-коду</h2>
+              <p class="muted pay-sub">Отсканируйте код банковским приложением или откройте ссылку на этом устройстве.</p>
+              <div class="pay-qr" id="payQrBox">
+                <img id="payQrImage" alt="QR-код для оплаты" hidden />
+                <div class="pay-qr-text" id="payQrText"></div>
+              </div>
+              <p class="muted pay-sum-line">К оплате <b id="payQrAmount">—</b></p>
+              <div class="pay-link-row">
+                <code id="payRequisite">—</code>
+                <button class="btn btn-sm" id="payCopy" type="button">
+                  <svg><use href="#i-copy" /></svg>
+                  Скопировать
+                </button>
+              </div>
+              <a class="btn btn-primary" id="payOpen" target="_blank" rel="noopener" hidden>Открыть оплату</a>
+              <p class="pay-wait"><span class="dot-live"></span> Ожидаем подтверждение оплаты</p>
+            </div>
+
+            <div class="pay-block" id="payError" hidden>
+              <h2 class="pay-title">Не удалось подготовить оплату</h2>
+              <p class="muted" id="payErrorText">Попробуй ещё раз.</p>
+              <div class="pay-actions">
+                <button class="btn btn-primary" id="payRetry" type="button">Повторить попытку</button>
+                <a class="btn" id="payFallback" target="_blank" rel="noopener" hidden>Открыть оплату по ссылке</a>
+              </div>
+            </div>
+
+            <div class="pay-block" id="paySuccess" hidden>
+              <div class="pay-check" aria-hidden="true">✓</div>
+              <h2 class="pay-title">Оплата подтверждена</h2>
+              <p class="muted">Подписка активна — сроки ссылок снова твои.</p>
+              <a class="btn btn-primary" href="#/profile">Перейти в кабинет</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Личный кабинет ================= -->
       <section class="view" id="view-profile" hidden>
         <a class="back-link" href="#/">
           <svg><use href="#i-arrow-left" /></svg>
@@ -397,7 +472,19 @@
                 CloudPayments и добавишь вебхук на <code>/api/billing/webhook</code>.
               </p>
 
-              <label class="switch">
+              <label class="field">
+                  <span>Платёжная система</span>
+                  <select id="setSubProvider">
+                    <option value="manual">Без онлайн-оплаты, выдаю вручную</option>
+                    <option value="h2h">QR внутри сайта: СБП, карта, крипта</option>
+                    <option value="cloudpayments">CloudPayments</option>
+                  </select>
+                  <small class="field-hint" id="subProviderHint">
+                    Пока выбрано «вручную» — сайт работает, подписку выдаёшь ты. Онлайн-оплату можно включить позже.
+                  </small>
+                </label>
+
+                <label class="switch">
                 <input type="checkbox" id="setSubEnabled" />
                 <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
                 <span class="switch-text">

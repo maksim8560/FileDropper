@@ -7,3 +7,8 @@ UPSTASH_BLOB_URL="https://b2e0533cedea.blob.upstash.io"
 # Нужны только для приёма оплаты; без них подписку можно выдавать вручную.
 CLOUDPAYMENTS_PUBLIC_ID="
 CLOUDPAYMENTS_SECRET_KEY="
+
+# Провайдер «реквизиты по запросу» (QR внутри сайта: СБП, карта, крипта).
+# Адрес сервиса и ключ из его личного кабинета.
+H2H_BASE_URL="
+H2H_API_KEY="

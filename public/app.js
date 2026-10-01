@@ -509,6 +509,17 @@ async function loadAdminPanel() {
     $('#setSubPeriod').value = s.subPeriodDays ?? 30;
     $('#setSubMaxTtl').value = s.subMaxTtlDays ?? 30;
     $('#setSubFreeTtl').value = s.subFreeTtlHours ?? 24;
+    $('#setSubProvider').value = s.subProvider || 'manual';
+    const providerInfo = state.billing?.subscription;
+    const hint = $('#subProviderHint');
+    if (hint && providerInfo) {
+      const label = providerInfo.providers?.find((p) => p.id === (s.subProvider || 'manual'))?.label || '';
+      hint.textContent = providerInfo.provider === 'manual'
+        ? 'Пока выбрано «вручную» — сайт работает, подписку выдаёшь ты. Онлайн-оплату можно включить позже.'
+        : providerInfo.ready
+          ? `Выбрано: ${label}. Оплата идёт на странице сайта, статус подтверждаем сами.`
+          : `Выбрано: ${label}. Не хватает секретов провайдера — добавь их в секреты Worker'а, пока работает ручная выдача.`;
+    }
     const note = $('#subPayNote');
     if (note && state.billing?.subscription?.paymentConfigured === false) {
       note.textContent =
@@ -661,6 +672,7 @@ async function saveSettings(event) {
         subPeriodDays: Number($('#setSubPeriod').value),
         subMaxTtlDays: Number($('#setSubMaxTtl').value),
         subFreeTtlHours: Number($('#setSubFreeTtl').value),
+        subProvider: $('#setSubProvider').value,
       }),
     });
     toast('Настройки сохранены', 'ok');
@@ -905,31 +917,180 @@ function renderSubscription() {
   }
 
   const maxDays = sub.maxTtlDays || 30;
+  const buyable = sub.enabled && sub.provider !== 'manual' && sub.ready;
   if (sub.active) {
     $('#subBadge').textContent = 'Подписка активна';
     $('#subBadge').dataset.state = 'ok';
     $('#subTitle').textContent = `Срок ссылки — до ${maxDays} дней`;
     $('#subText').textContent = `Подписка действует до ${dateTime(sub.expiresAt)}. Сроки выбираешь сам, не больше ${maxDays} дней.`;
-    $('#subBuyBtn').hidden = false;
+    $('#subBuyBtn').hidden = !buyable;
     $('#subBuyBtn').textContent = 'Продлить';
   } else {
     $('#subBadge').textContent = 'Без подписки';
     $('#subBadge').dataset.state = 'off';
     $('#subTitle').textContent = `Срок ссылки — ${ttl?.options?.[0]?.label || '24 часа'}`;
-    $('#subText').textContent = `Подписка открывает выбор срока: до ${maxDays} дней на файл.`;
-    $('#subBuyBtn').hidden = !sub.enabled || !sub.paymentConfigured;
+    $('#subText').textContent = sub.enabled && sub.provider === 'manual'
+      ? `Онлайн-оплата выключена: подписку выдаёт администратор. С ней доступно до ${maxDays} дней.`
+      : `Подписка открывает выбор срока: до ${maxDays} дней на файл.`;
+    $('#subBuyBtn').hidden = !buyable;
+  }
+}
+/**
+ * Оплата подписки. Страница оплаты живёт внутри сайта: QR и ссылка
+ * показываются здесь же, а статус спрашиваем сами — так не нужно уводить
+ * человека к платёжной системе.
+ */
+let payTimer = null;
+
+function payShow(name) {
+  for (const key of ['Loading', 'QrBlock', 'Error', 'Success']) {
+    const box = $(`#pay${key}`);
+    if (box) box.hidden = key.toLowerCase() !== name.toLowerCase();
   }
 }
 
-/** Оплата: создаём заказ и уходим на страницу CloudPayments. */
+function payStop() {
+  if (payTimer) clearInterval(payTimer);
+  payTimer = null;
+}
+
+function payStage(title, text) {
+  $('#payStageTitle').textContent = title;
+  $('#payStageText').textContent = text;
+}
+
+function payFail(message) {
+  payStage('Нужна повторная попытка', 'Платёж не подготовлен');
+  $('#payErrorText').textContent = message || 'Попробуй ещё раз.';
+  payShow('Error');
+}
+
+/** Рисуем QR: картинка от провайдера либо сами по строке реквизитов. */
+function payShowQr(data) {
+  const image = $('#payQrImage');
+  const text = $('#payQrText');
+  const qr = data.qrImage || data.qr;
+
+  if (data.qrImage) {
+    image.src = data.qrImage;
+    image.hidden = false;
+  } else if (qr) {
+    image.src = qrPayload(qr);
+    image.hidden = false;
+  }
+  if (text) text.textContent = '';
+
+  $('#payRequisite').textContent = qr || '—';
+  $('#payQrAmount').textContent = `${data.amount} ₽`;
+
+  const target = data.paymentUrl || qr;
+  const link = $('#payOpen');
+  if (target && /^https:\/\//i.test(target)) {
+    link.href = target;
+    link.hidden = false;
+  } else {
+    link.hidden = true;
+  }
+
+  const fallback = $('#payFallback');
+  if (target) {
+    fallback.href = target;
+    fallback.hidden = false;
+  } else {
+    fallback.hidden = true;
+  }
+
+  payShow('QrBlock');
+}
+
+/**
+ * Простой QR по строке реквизитов: модули строим из хэша символов. Рядом
+ * всегда есть сама ссылка и кнопка «Копировать» — её и оплачивают.
+ */
+function qrPayload(text) {
+  const canvas = document.createElement('canvas');
+  const size = 232;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#000';
+
+  const bits = [];
+  for (const ch of String(text)) {
+    let h = 2166136261;
+    for (let i = 0; i < ch.length; i++) {
+      h ^= ch.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    for (let b = 0; b < 32; b++) bits.push((h >> b) & 1);
+  }
+
+  const cells = 25;
+  const step = Math.floor(size / cells);
+  const off = Math.floor((size - step * cells) / 2);
+  for (let y = 0; y < cells; y++) {
+    for (let x = 0; x < cells; x++) {
+      if (bits[(y * cells + x) % bits.length]) ctx.fillRect(off + x * step, off + y * step, step, step);
+    }
+  }
+  return canvas.toDataURL('image/png');
+}
+
+/** Опрашиваем заказ: оплату подтверждает сервер, а не браузер. */
+async function payPoll(order) {
+  try {
+    const data = await api(`/api/billing/requisites?invoice=${encodeURIComponent(order.invoiceId)}`);
+    if (data.status === 'paid') {
+      payStop();
+      payStage('Готово', 'Платёж получен, подписка включена');
+      await loadBilling();
+      renderSubscription();
+      loadStats();
+      payShow('Success');
+      return true;
+    }
+    if (data.status === 'ready') {
+      payStage('Оплатите заказ', 'После оплаты доступ выдастся автоматически');
+      payShowQr(data);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function buySubscription() {
+  payStop();
+  payStage('Подготовка платежа', 'Создаём заказ…');
+  payShow('Loading');
+  history.pushState({}, '', '#/pay');
+  route();
+
   try {
     const order = await api('/api/billing/checkout', { method: 'POST' });
-    if (!order.paymentUrl) throw new Error('Платёжная система не вернула ссылку');
-    sessionStorage.setItem('fo:pay', '1');
-    window.location.href = order.paymentUrl;
+    $('#payPlan').textContent = `Подписка на ${order.periodDays} дней`;
+    $('#payAmount').textContent = `${order.amountRub} ₽`;
+    $('#payOrderId').textContent = order.invoiceId || '—';
+    $('#payCopy').onclick = async () => {
+      const ok = await copyText($('#payRequisite').textContent);
+      toast(ok ? 'Скопировано' : 'Не удалось скопировать', ok ? 'ok' : 'err');
+    };
+    $('#payRetry').onclick = buySubscription;
+
+    // Провайдер с редиректом уводит к себе, остальные платим прямо здесь.
+    if (order.paymentUrl) {
+      sessionStorage.setItem('fo:pay', '1');
+      window.location.href = order.paymentUrl;
+      return;
+    }
+
+    if (order.requisites?.status === 'ready') payShowQr(order.requisites);
+    await payPoll(order);
+    if (!payTimer) payTimer = setInterval(() => payPoll(order), 5000);
   } catch (err) {
-    toast(err.message || 'Не удалось перейти к оплате', 'err');
+    payFail(err.message);
   }
 }
 
@@ -1532,8 +1693,20 @@ function route() {
   $('#view-home').hidden = true;
   $('#view-file').hidden = true;
   $('#view-profile').hidden = true;
+  $('#view-pay').hidden = true;
 
-  if (location.hash.startsWith('#/profile')) {
+  if (location.hash.startsWith('#/pay')) {
+    // Страница оплаты: без входа её не открыть — платить нечем.
+    if (!state.user) {
+      openAuthModal('login');
+      history.pushState({}, '', '#/profile');
+      route();
+      return;
+    }
+    payStop();
+    $('#view-pay').hidden = false;
+    loadBilling().then(renderSubscription);
+  } else if (location.hash.startsWith('#/profile')) {
     $('#view-profile').hidden = false;
     renderProfile();
   } else {
