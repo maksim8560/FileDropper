@@ -82,6 +82,7 @@ const NOTE_PREFIX = 'notes/';
 const USER_PREFIX = 'user/';
 const SESSION_PREFIX = 'session/';
 const INDEX_PREFIX = 'userfiles/';
+const STATS_PREFIX = 'stats/';
 const SETTINGS_KEY = 'settings/global';
 const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const PBKDF2_ITERATIONS = 100_000;
@@ -94,6 +95,80 @@ const TTL_OPTIONS = [
   { hours: 0, label: 'Навсегда' },
 ];
 const TTL_HOURS_ALLOWED = TTL_OPTIONS.map((o) => o.hours);
+
+/* ------------------------ CloudPayments ------------------------ */
+
+/**
+ * Запрос к API CloudPayments: логин — Public ID терминала, пароль — API Secret.
+ * Секреты живут в секретах Worker'а, а не в коде. Идемпотентность — заголовок
+ * X-Request-ID, иначе повторный запрос создаст второй заказ.
+ */
+async function cloudpayments(env, path, { method = 'GET', query = null, body = null, requestId = null } = {}) {
+  const publicId = String(env.CLOUDPAYMENTS_PUBLIC_ID || '').trim();
+  const secret = String(env.CLOUDPAYMENTS_SECRET_KEY || '').trim();
+  if (!publicId || !secret) return { configured: false, ok: false, error: 'Платёжная система не подключена' };
+
+  const url = new URL(`https://api.cloudpayments.ru${path}`);
+  for (const [key, value] of Object.entries(query || {})) url.searchParams.set(key, value);
+
+  const headers = {
+    authorization: `Basic ${btoa(`${publicId}:${secret}`)}`,
+    'content-type': 'application/json',
+  };
+  if (requestId) headers['x-request-id'] = requestId;
+
+  let res;
+  try {
+    res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  } catch (err) {
+    return { configured: true, ok: false, error: `Сеть недоступна: ${err?.message || err}` };
+  }
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || data?.Success === false) {
+    return { configured: true, ok: false, error: data?.Message || `CloudPayments ответила ${res.status}` };
+  }
+  return { configured: true, ok: true, data: data?.Data ?? data };
+}
+
+function cloudpaymentsConfigured(env) {
+  return !!(String(env.CLOUDPAYMENTS_PUBLIC_ID || '').trim() && String(env.CLOUDPAYMENTS_SECRET_KEY || '').trim());
+}
+
+/**
+ * Достаёт из уведомления CloudPayments номер заказа и статус. Тело приходит
+ * XML (по умолчанию) или JSON — в зависимости от настроек в личном кабинете.
+ */
+function parseCloudNotification(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  if (raw.startsWith('{')) {
+    try {
+      const data = JSON.parse(raw);
+      const row = data.Transaction || data.transaction || data;
+      return {
+        status: String(row.Status ?? row.status ?? ''),
+        invoiceId: String(row.OrderId ?? row.InvoiceId ?? row.orderId ?? ''),
+        accountId: String(row.AccountId ?? row.accountId ?? ''),
+        amount: Number(row.Amount ?? row.amount) || null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  const pick = (tag) => {
+    const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i').exec(raw);
+    return m ? m[1].trim() : '';
+  };
+  return {
+    status: pick('Status'),
+    invoiceId: pick('OrderId') || pick('InvoiceId'),
+    accountId: pick('AccountId'),
+    amount: Number(pick('Amount')) || null,
+  };
+}
 
 /**
  * Запасной срок для файла, у которого срок ещё не выбрали. Если пользователь
@@ -111,6 +186,12 @@ const DEFAULT_SETTINGS = {
   allowRegistration: true,
   maintenance: false,
   anonymousTtlHours: 1,
+  // Подписка: с ней ссылка живёт до subMaxTtlDays, без неё — subFreeTtlHours.
+  subEnabled: false,
+  subPriceRub: 290,
+  subPeriodDays: 30,
+  subMaxTtlDays: 30,
+  subFreeTtlHours: 24,
 };
 
 /**
@@ -518,8 +599,77 @@ async function handleAdminSettings(request, env, kv) {
   if (body.allowRegistration !== undefined) patch.allowRegistration = !!body.allowRegistration;
   if (body.maintenance !== undefined) patch.maintenance = !!body.maintenance;
 
+  // Подписка
+  if (body.subEnabled !== undefined) patch.subEnabled = !!body.subEnabled;
+  if (body.subPriceRub !== undefined) patch.subPriceRub = clamp(Number(body.subPriceRub), 0, 1000000);
+  if (body.subPeriodDays !== undefined) patch.subPeriodDays = clamp(Number(body.subPeriodDays), 1, 365);
+  if (body.subMaxTtlDays !== undefined) patch.subMaxTtlDays = clamp(Number(body.subMaxTtlDays), 1, 365);
+  if (body.subFreeTtlHours !== undefined) patch.subFreeTtlHours = clamp(Number(body.subFreeTtlHours), 1, 24 * 31);
+
   const settings = await writeSettings(kv, patch, gate.session.username);
   return json({ ok: true, settings });
+}
+
+/**
+ * Подписка вручную: выдать, продлить или отозвать. Нужна, когда платёжная
+ * система ещё не подключена или человек оплатил не через сайт.
+ */
+async function handleAdminSubscription(request, env, kv, storage, cfg) {
+  const gate = await requireAdmin(request, env, kv);
+  if (gate.error) return gate.error;
+  if (request.method !== 'PUT') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+
+  const body = await request.json().catch(() => null);
+  const user = body?.login ? await findUser(kv, body.login) : null;
+  if (!user) return fail(404, 'Пользователь с таким логином не найден', 'user_not_found');
+
+  const sub = await subscriptionOf(kv, user.id) || {
+    userId: user.id,
+    username: user.username,
+    active: false,
+    startedAt: Date.now(),
+    expiresAt: 0,
+  };
+
+  if (body.revoke) {
+    const touched = await expireSubscription(storage, kv, cfg, sub);
+    return json({ ok: true, revoked: true, files: touched });
+  }
+
+  const result = await activateSubscription(storage, kv, cfg, user, {
+    days: Number(body.days) || cfg.settings.subPeriodDays,
+    source: 'admin',
+  });
+  return json({ ok: true, subscription: result.record, restored: result.restored });
+}
+
+/** Список подписок для панели управления. */
+async function handleAdminSubscriptions(request, env, kv) {
+  const gate = await requireAdmin(request, env, kv);
+  if (gate.error) return gate.error;
+
+  const now = Date.now();
+  const { keys } = await kv.list(SUB_PREFIX, 300);
+  const list = [];
+  for (const name of keys || []) {
+    const record = await kv.get(name);
+    if (!record) continue;
+    list.push({
+      username: record.username,
+      active: subscriptionActive(record, now),
+      expiresAt: record.expiresAt,
+      source: record.source,
+      amountRub: record.amountRub ?? null,
+    });
+  }
+  list.sort((a, b) => Number(b.active) - Number(a.active) || (b.expiresAt || 0) - (a.expiresAt || 0));
+
+  return json({
+    ok: true,
+    subscribers: list.filter((s) => s.active).length,
+    expiringSoon: list.filter((s) => s.active && s.expiresAt - now < 3 * 24 * 3600 * 1000).length,
+    list: list.slice(0, 100),
+  });
 }
 
 async function handleAdminOverview(request, env, kv, storage) {
@@ -618,6 +768,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     return json({
       files,
       listed,
+      filesToday: await filesToday(kv),
       maxFileSizeMb: Math.round(cfg.maxFileSize / 1024 / 1024),
       maxFiles: cfg.maxFiles,
       storage: storage.status(),
@@ -627,11 +778,19 @@ async function handleApi(request, env, url, storage, kv, ctx) {
         maintenance: cfg.settings.maintenance,
         allowRegistration: cfg.settings.allowRegistration,
         anonymousTtlHours: clamp(Number(cfg.settings.anonymousTtlHours ?? 1), 1, 24 * 30) || 1,
+        subEnabled: !!cfg.settings.subEnabled,
+        subPriceRub: Number(cfg.settings.subPriceRub) || 0,
+        subPeriodDays: clamp(Number(cfg.settings.subPeriodDays), 1, 365),
       },
       ttlOptions: TTL_OPTIONS,
       defaultTtlHours: cfg.defaultTtlHours,
       auth: { enabled: true },
     });
+  }
+
+  /* --- подписка: состояние, оплата, вебхук --- */
+  if (pathname.startsWith('/api/billing/')) {
+    return handleBilling(request, env, kv, storage, cfg, url, pathname.slice('/api/billing/'.length));
   }
 
   /* --- авторизация --- */
@@ -657,6 +816,14 @@ async function handleApi(request, env, url, storage, kv, ctx) {
   /* --- панель управления --- */
   if (pathname === '/api/admin/settings') {
     return handleAdminSettings(request, env, kv);
+  }
+
+  if (pathname === '/api/admin/subscription') {
+    return handleAdminSubscription(request, env, kv, storage, cfg);
+  }
+
+  if (pathname === '/api/admin/subscriptions') {
+    return handleAdminSubscriptions(request, env, kv);
   }
 
   if (pathname === '/api/admin/overview') {
@@ -730,6 +897,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
       await storage.put(meta.key, bytes, { contentType: meta.type, size: bytes.byteLength });
       await saveMeta(storage, meta);
       if (meta.userId) background(ctx, addToUserIndex(kv, meta.userId, meta));
+      background(ctx, bumpDailyCount(kv, meta.createdAt));
     } catch (err) {
       return storageFailure(err);
     }
@@ -817,6 +985,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     if (!payload) return fail(409, 'Файл не долетел до хранилища — попробуйте ещё раз', 'upload_incomplete');
 
     if (meta.userId) background(ctx, addToUserIndex(kv, meta.userId, meta));
+    background(ctx, bumpDailyCount(kv, meta.createdAt));
     return json({ ok: true, file: publicMeta(meta), links: linksFor(meta) });
   }
 
@@ -826,7 +995,9 @@ async function handleApi(request, env, url, storage, kv, ctx) {
    */
   const linkMatch = /^\/api\/file\/([a-z0-9]{4,32})\/link$/.exec(pathname);
   if (linkMatch) {
-    if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+    if (request.method !== 'POST' && request.method !== 'PATCH') {
+      return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+    }
 
     const id = linkMatch[1];
     const meta = await readMeta(storage, id);
@@ -842,6 +1013,12 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     const byAccount = !!session && !!meta.userId && session.userId === meta.userId;
     if (!byToken && !byAccount) return fail(403, 'Нет прав на этот файл', 'forbidden');
 
+    // Гость срок не выбирает: он короткий и назначается сервером.
+    const guest = !meta.userId;
+    const sub = session ? await subscriptionOf(kv, session.userId) : null;
+    const subscribed = subscriptionActive(sub);
+    const rules = ttlOptionsFor(cfg, { guest, subscribed });
+
     const body = await request.json().catch(() => null);
 
     // Одноразовость можно поменять, пока по ссылке никто не скачал.
@@ -852,24 +1029,45 @@ async function handleApi(request, env, url, storage, kv, ctx) {
       meta.once = !!body.once;
     }
 
-    // Срок задают один раз и только владельцу аккаунта: гостям он назначен.
-    if (meta.ttlPending) {
-      if (!byAccount) {
-        return fail(401, 'Войдите в аккаунт, чтобы выбрать срок жизни ссылки', 'unauthorized');
+    // Срок меняют только владельцу аккаунта: гостям он назначен.
+    if (!guest) {
+      const wantsTtl = body?.hours !== undefined || meta.ttlPending || request.method === 'PATCH';
+      if (wantsTtl) {
+        const hours = Number(body?.hours);
+        const limit = subscribed ? rules.maxHours : rules.freeHours;
+
+        // Явная ошибка в значении — это 400, превышение лимита — 403 с подсказкой.
+        if (!Number.isFinite(hours) || hours < 1) {
+          return fail(400, 'Срок должен быть числом часов не меньше 1', 'bad_ttl', { maxHours: limit });
+        }
+        if (!subscribed && hours > limit) {
+          return fail(403, 'Такой срок доступен с подпиской', 'subscription_required', {
+            maxHours: limit,
+            subscription: { active: false },
+          });
+        }
+        if (hours > limit) {
+          return fail(400, `Срок должен быть от 1 часа до ${Math.round(limit / 24)} суток`, 'bad_ttl', { maxHours: limit });
+        }
+
+        // Задают один раз при создании ссылки; потом можно править из кабинета.
+        if (meta.ttlPending || !meta.ttlHours) meta.ttlPending = false;
+        meta.ttlHours = hours;
+        meta.expiresAt = Date.now() + hours * 3600 * 1000;
+        meta.ttlChosenAt = Date.now();
       }
-      const hours = Number(body?.hours);
-      if (!TTL_HOURS_ALLOWED.includes(hours)) {
-        return fail(400, 'Срок должен быть один час, 24 часа, 7 дней или навсегда', 'bad_ttl');
-      }
-      meta.expiresAt = hours > 0 ? Date.now() + hours * 3600 * 1000 : null;
-      meta.ttlPending = false;
-      meta.ttlChosenAt = Date.now();
     }
 
     await saveMeta(storage, meta);
     if (meta.userId) background(ctx, updateUserIndex(kv, meta.userId, meta));
 
-    return json({ ok: true, file: publicMeta(meta), links: linksFor(meta) });
+    return json({
+      ok: true,
+      file: publicMeta(meta),
+      links: linksFor(meta),
+      subscription: { active: subscribed, expiresAt: sub?.expiresAt ?? null },
+      ttl: rules,
+    });
   }
 
   /* --- конкретный файл --- */
@@ -1017,6 +1215,305 @@ async function addToUserIndex(kv, userId, meta) {
 async function removeFromUserIndex(kv, userId, fileId) {
   const index = (await kv.get(`${INDEX_PREFIX}${userId}`)) || [];
   await kv.put(`${INDEX_PREFIX}${userId}`, index.filter((f) => f.id !== fileId));
+}
+
+/** Состояние подписки и правила сроков — для кабинета и формы загрузки. */
+async function billingState(kv, env, cfg, session) {
+  const sub = session ? await subscriptionOf(kv, session.userId) : null;
+  const active = subscriptionActive(sub);
+  const guest = !session;
+
+  return {
+    ok: true,
+    subscription: {
+      enabled: !!cfg.settings.subEnabled,
+      active,
+      expiresAt: sub?.expiresAt ?? null,
+      startedAt: sub?.startedAt ?? null,
+      priceRub: Number(cfg.settings.subPriceRub) || 0,
+      periodDays: clamp(Number(cfg.settings.subPeriodDays), 1, 365),
+      maxTtlDays: clamp(Number(cfg.settings.subMaxTtlDays), 1, 365),
+      freeTtlHours: clamp(Number(cfg.settings.subFreeTtlHours ?? 24), 1, 24 * 31),
+      paymentConfigured: cloudpaymentsConfigured(env),
+    },
+    ttl: ttlOptionsFor(cfg, { guest, subscribed: active }),
+  };
+}
+
+/**
+ * Подписка: оплата через CloudPayments.
+ *
+ *   status   — состояние подписки (вход обязателен);
+ *   checkout — создаёт заказ и отдаёт ссылку на оплату;
+ *   webhook  — уведомление CloudPayments: сверяем платёж их же API и включаем подписку.
+ */
+async function handleBilling(request, env, kv, storage, cfg, url, action) {
+  if (action === 'webhook') {
+    if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+
+    const note = parseCloudNotification(await request.text().catch(() => ''));
+    if (!note?.invoiceId) return json({ ok: true });
+    if (note.status && note.status.toLowerCase() !== 'completed') return json({ ok: true });
+
+    // Сверяем по API CloudPayments: свой вебхук никому нельзя подделать.
+    const check = await cloudpayments(env, '/payments/find', {
+      method: 'POST',
+      body: { InvoiceId: note.invoiceId },
+    });
+    if (!check.configured) return json({ ok: true });
+    if (!check.ok || check.data?.Status !== 'Completed') return json({ ok: true });
+
+    const userId = String(check.data.AccountId || note.accountId || '');
+    if (!userId) return json({ ok: true });
+
+    const user = await kv.get(`${USER_PREFIX}${userId}`);
+    if (!user) return json({ ok: true });
+
+    // Повторное уведомление о том же платеже не должен продлевать подписку дважды.
+    const orderId = String(check.data.TransactionId ?? check.data.Id ?? note.invoiceId);
+    const sub = await subscriptionOf(kv, userId);
+    if (sub?.orderId === orderId) return json({ ok: true, duplicate: true });
+
+    const result = await activateSubscription(storage, kv, cfg, user, {
+      days: Number(check.data.Data?.periodDays ?? cfg.settings.subPeriodDays),
+      orderId,
+      amountRub: Number(check.data.Amount) || null,
+      source: 'cloudpayments',
+    });
+
+    return json({ ok: true, activated: true, expiresAt: result.record.expiresAt, restored: result.restored });
+  }
+
+  const session = await readSession(kv, request);
+  if (!session) return fail(401, 'Войдите в аккаунт', 'unauthorized');
+
+  if (action === 'status') {
+    return json(await billingState(kv, env, cfg, session));
+  }
+
+  if (action === 'checkout') {
+    if (request.method !== 'POST') return fail(405, 'Метод не поддерживается', 'method_not_allowed');
+    if (!cfg.settings.subEnabled) return fail(403, 'Оплата подписки сейчас выключена', 'sub_disabled');
+    if (!cloudpaymentsConfigured(env)) {
+      return fail(503, 'Платёжная система не подключена — обратитесь к администратору', 'payment_not_configured');
+    }
+
+    const price = clamp(Number(cfg.settings.subPriceRub), 0, 1000000);
+    const periodDays = clamp(Number(cfg.settings.subPeriodDays), 1, 365);
+    const maxDays = clamp(Number(cfg.settings.subMaxTtlDays), 1, 365);
+    const invoiceId = `sub-${session.userId}-${Date.now()}`;
+
+    const created = await cloudpayments(env, '/orders/create', {
+      method: 'POST',
+      requestId: invoiceId,
+      body: {
+        Amount: price.toFixed(2),
+        Currency: 'RUB',
+        Description: `Подписка Файлообменника: срок ссылок до ${maxDays} дней на ${periodDays} дней`,
+        InvoiceId: invoiceId,
+        AccountId: session.userId,
+        SendEmail: false,
+        Culture: 'ru-RU',
+        Data: { userId: session.userId, periodDays: String(periodDays) },
+      },
+    });
+
+    if (!created.configured) return fail(503, 'Платёжная система не подключена', 'payment_not_configured');
+    if (!created.ok) return fail(502, created.error || 'Платёжная система не ответила', 'payment_error');
+
+    const paymentUrl = created.data?.PaymentUrl || created.data?.paymentUrl || null;
+    if (!paymentUrl) return fail(502, 'Платёжная система не вернула ссылку на оплату', 'payment_error');
+
+    return json({ ok: true, paymentUrl, invoiceId, amountRub: price, periodDays });
+  }
+
+  return fail(404, 'Неизвестный метод оплаты', 'not_found');
+}
+
+/** Дата по UTC в формате YYYY-MM-DD: под неё копим счётчик загрузок. */
+function dayKey(ts = Date.now()) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+
+/** Русское склонение: pluralRu(2, ['час', 'часа', 'часов']) → 'часа'. */
+function pluralRu(n, forms) {
+  const abs = Math.abs(Number(n) || 0) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return forms[2];
+  if (last > 1 && last < 5) return forms[1];
+  if (last === 1) return forms[0];
+  return forms[2];
+}
+
+/* ----------------------------- подписка ----------------------------- */
+
+const SUB_PREFIX = 'sub/';
+
+/** Запись подписки пользователя или null. */
+async function subscriptionOf(kv, userId) {
+  if (!userId) return null;
+  return (await kv.get(`${SUB_PREFIX}${userId}`)) || null;
+}
+
+/** Подписка активна, если её не отозвали и срок не истёк. */
+function subscriptionActive(sub, now = Date.now()) {
+  return !!sub && sub.active !== false && sub.expiresAt > now;
+}
+
+/**
+ * Что можно выбрать по сроку жизни.
+ *
+ *   гость без аккаунта — фиксированный короткий срок, выбирать нечего;
+ *   пользователь без подписки — subFreeTtlHours (по умолчанию сутки);
+ *   подписчик — любой из вариантов до subMaxTtlDays.
+ *
+ * «Навсегда» больше не предлагаем: срок ограничен подпиской.
+ */
+function ttlOptionsFor(cfg, { guest, subscribed }) {
+  const anonHours = clamp(Number(cfg.settings.anonymousTtlHours ?? 1), 1, 24 * 30) || 1;
+  const freeHours = clamp(Number(cfg.settings.subFreeTtlHours ?? 24), 1, 24 * 31) || 24;
+  const maxDays = clamp(Number(cfg.settings.subMaxTtlDays ?? 30), 1, 365) || 30;
+
+  if (guest) {
+    return { options: [{ hours: anonHours, label: `${anonHours} ч` }], maxHours: anonHours, freeHours, selectable: false };
+  }
+
+  if (!subscribed) {
+    const days = Math.max(1, Math.round(freeHours / 24));
+    const label =
+      freeHours % 24 === 0 ? `${days} ${pluralRu(days, ['сутки', 'суток', 'суток'])}` : `${freeHours} ч`;
+    return { options: [{ hours: freeHours, label }], maxHours: freeHours, freeHours, selectable: false };
+  }
+
+  const wanted = [1, 24, 168, maxDays * 24].filter((h) => h <= maxDays * 24 && h >= 1);
+  const unique = [...new Set(wanted)].sort((a, b) => a - b);
+  const labels = { 1: '1 час', 24: '24 часа', 168: '7 дней' };
+  return {
+    options: unique.map((h) => ({
+      hours: h,
+      label: labels[h] ?? `${Math.round(h / 24)} ${pluralRu(Math.round(h / 24), ['день', 'дня', 'дней'])}`,
+    })),
+    maxHours: maxDays * 24,
+    freeHours,
+    selectable: true,
+  };
+}
+
+/**
+ * Включает или продлевает подписку и возвращает файлам выбранные сроки:
+ * человек оплатил — сроки, которые он выбирал сам, снова действуют.
+ */
+async function activateSubscription(storage, kv, cfg, user, { days, orderId = null, amountRub = null, source = 'admin' }) {
+  const now = Date.now();
+  const period = clamp(Number(days ?? cfg.settings.subPeriodDays), 1, 365) || 30;
+  const previous = await subscriptionOf(kv, user.id);
+
+  // Продление считаем от конца текущего срока, а не от сегодня.
+  const base = subscriptionActive(previous, now) ? previous.expiresAt : now;
+
+  const record = {
+    userId: user.id,
+    username: user.username,
+    active: true,
+    startedAt: previous?.startedAt ?? now,
+    expiresAt: base + period * 24 * 3600 * 1000,
+    orderId,
+    amountRub,
+    source,
+    updatedAt: now,
+  };
+  await kv.put(`${SUB_PREFIX}${user.id}`, record);
+
+  // Возвращаем файлам тот срок, который человек выбирал сам.
+  const index = (await kv.get(`${INDEX_PREFIX}${user.id}`)) || [];
+  let restored = 0;
+  for (const entry of index) {
+    const meta = await readMeta(storage, entry.id);
+    if (!meta || !meta.ttlHours) continue;
+    meta.expiresAt = now + meta.ttlHours * 3600 * 1000;
+    meta.restoredAt = now;
+    await saveMeta(storage, meta);
+    entry.expiresAt = meta.expiresAt;
+    restored += 1;
+  }
+  if (restored) await kv.put(`${INDEX_PREFIX}${user.id}`, index);
+
+  return { record, restored };
+}
+
+/**
+ * Подписка кончилась: сроки файлов срезаются до бесплатных, но выбранные
+ * человеком часы сохраняются — вернём их, если он снова оплатит.
+ */
+async function expireSubscription(storage, kv, cfg, record) {
+  const now = Date.now();
+  const freeMs = (clamp(Number(cfg.settings.subFreeTtlHours ?? 24), 1, 24 * 31) || 24) * 3600 * 1000;
+  const limit = now + freeMs;
+
+  const index = (await kv.get(`${INDEX_PREFIX}${record.userId}`)) || [];
+  let touched = 0;
+  for (const entry of index) {
+    const meta = await readMeta(storage, entry.id);
+    if (!meta) continue;
+    if (meta.expiresAt && meta.expiresAt <= limit) continue;
+    meta.expiresAt = limit;
+    meta.downgradedAt = now;
+    await saveMeta(storage, meta);
+    entry.expiresAt = limit;
+    touched += 1;
+  }
+  if (touched) await kv.put(`${INDEX_PREFIX}${record.userId}`, index);
+
+  await kv.put(`${SUB_PREFIX}${record.userId}`, { ...record, active: false, expiredAt: now, updatedAt: now });
+  return touched;
+}
+
+/** Кто ещё платит: записи с истёкшим сроком обновляем по расписанию. */
+async function sweepSubscriptions(storage, kv, cfg) {
+  const now = Date.now();
+  let expired = 0;
+  let files = 0;
+
+  const { keys } = await kv.list(SUB_PREFIX, 200);
+  for (const name of keys || []) {
+    if (!name.startsWith(SUB_PREFIX)) continue;
+    const record = await kv.get(name);
+    if (!record || !record.active) continue;
+    if (record.expiresAt > now) continue;
+    files += await expireSubscription(storage, kv, cfg, record);
+    expired += 1;
+  }
+  return { expired, files };
+}
+
+/**
+ * Считает загрузки за сутки. Счётчик хранится отдельно от файлов, поэтому
+ * чистка просроченного не обнуляет статистику за день. Старые дни убираем,
+ * чтобы в бакете не копились мелкие записи.
+ */
+async function bumpDailyCount(kv, ts = Date.now()) {
+  const key = `${STATS_PREFIX}${dayKey(ts)}`;
+  const next = (Number((await kv.get(key)) || 0) || 0) + 1;
+  await kv.put(key, next);
+
+  try {
+    const cutoff = dayKey(ts - 30 * 24 * 3600 * 1000);
+    const { keys } = await kv.list(STATS_PREFIX, 60);
+    for (const item of keys || []) {
+      const name = typeof item === 'string' ? item : item.name || item.key;
+      if (!name || !name.startsWith(STATS_PREFIX)) continue;
+      const day = name.slice(STATS_PREFIX.length).replace(/\.json$/, '');
+      if (day && day < cutoff) await kv.del(name);
+    }
+  } catch {
+    /* чистка старых дней — не критично */
+  }
+
+  return next;
+}
+
+async function filesToday(kv) {
+  return Number((await kv.get(`${STATS_PREFIX}${dayKey()}`)) || 0) || 0;
 }
 
 /** Обновляет запись индекса после смены срока жизни. */
@@ -1173,6 +1670,19 @@ export default {
 
   async scheduled(event, env, ctx) {
     const storage = createStorage(env);
-    ctx.waitUntil(cleanup(storage, createKv(env)).catch((err) => console.warn('cleanup failed:', err?.message || err)));
+    const kv = createKv(env);
+    ctx.waitUntil(
+      (async () => {
+        const cfg = await effectiveLimits(env, kv);
+        // Подписки, которые кончились: сроки файлов срезаются до бесплатных.
+        const subs = await sweepSubscriptions(storage, kv, cfg);
+        if (subs.expired) console.log(`подписок истекло: ${subs.expired}, файлов обрезано: ${subs.files}`);
+        const removed = await cleanup(storage, kv).catch((err) => {
+          console.warn('cleanup failed:', err?.message || err);
+          return 0;
+        });
+        if (removed) console.log(`просроченных файлов удалено: ${removed}`);
+      })(),
+    );
   },
 };

@@ -293,6 +293,77 @@ html.booting #maintBanner {
   height: 26px;
 }
 
+/* ----------------------------- Подписка ----------------------------- */
+
+.sub-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 4px 0 18px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg, 20px);
+  border: 1px solid var(--glass-stroke);
+  background: var(--glass-bg);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.sub-card[hidden] {
+  display: none;
+}
+
+.sub-card-main {
+  min-width: 0;
+}
+
+.sub-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.sub-card-title strong {
+  font-size: 1rem;
+}
+
+.sub-card p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.sub-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  background: var(--fill-soft);
+  border: 1px solid var(--glass-stroke);
+}
+
+.sub-badge[data-state="ok"] {
+  color: #30d158;
+  border-color: rgba(48, 209, 88, 0.45);
+  background: rgba(48, 209, 88, 0.12);
+}
+
+.sub-badge[data-state="off"] {
+  color: #ff9f0a;
+  border-color: rgba(255, 159, 10, 0.45);
+  background: rgba(255, 159, 10, 0.12);
+}
+
+.admin-row-tight {
+  align-items: flex-end;
+  gap: 12px;
+}
+
 /* Подсказка в форме загрузки: срок и одноразовость выбирают после загрузки.
    Оранжевая рамка — чтобы взгляд сразу зацепился за неё. Наведение осталось,
    а нажатия нет: подсказка ничего не делает. */

@@ -2,3 +2,8 @@
 # Для продакшена: npx wrangler secret put UPSTASH_BLOB_TOKEN
 UPSTASH_BLOB_TOKEN=""
 UPSTASH_BLOB_URL="https://b2e0533cedea.blob.upstash.io"
+
+# CloudPayments (личный кабинет → Терминалы → Public ID и API Secret).
+# Нужны только для приёма оплаты; без них подписку можно выдавать вручную.
+CLOUDPAYMENTS_PUBLIC_ID="
+CLOUDPAYMENTS_SECRET_KEY="

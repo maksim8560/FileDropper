@@ -41,25 +41,29 @@ const id = up.body.file.id;
 const noTtl = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ once: false }) });
 check('без срока ссылка не создаётся → 400', noTtl.status === 400, `status=${noTtl.status}`);
 
-// Мусорный срок
-const bad = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ hours: 5, once: false }) });
-check('срок не из списка → 400', bad.status === 400, `status=${bad.status}`);
+// Срок не из диапазона
+const bad = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ hours: 0, once: false }) });
+check('срок вне диапазона → 400', bad.status === 400, `status=${bad.status}`);
 
-// Создаём: 7 дней + одноразовая
+// Без подписки дольше бесплатного срока нельзя
+const tooLong = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ hours: 168, once: false }) });
+check('7 дней без подписки → 403', tooLong.status === 403 && tooLong.body?.error?.code === 'subscription_required', `status=${tooLong.status}`);
+
+// Создаём: бесплатные сутки + одноразовая
 const created = await api(`/api/file/${id}/link`, {
   method: 'POST',
   headers: H,
-  body: JSON.stringify({ hours: 168, once: true }),
+  body: JSON.stringify({ hours: 24, once: true }),
 });
 check('ссылка создана', created.status === 200, `status=${created.status} ${JSON.stringify(created.body).slice(0, 100)}`);
 check('одноразовая включена', created.body?.file?.once === true, JSON.stringify(created.body?.file));
 const hours = (created.body.file.expiresAt - Date.now()) / 3600000;
-check('срок 7 дней', Math.abs(hours - 168) < 0.5, `${hours.toFixed(1)} ч`);
+check('срок 24 часа', Math.abs(hours - 24) < 0.5, `${hours.toFixed(1)} ч`);
 check('ссылка вернулась', created.body?.links?.page === `/f/${id}`, JSON.stringify(created.body?.links));
 
-// Сменить срок повторно нельзя
-const again = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ hours: 1, once: true }) });
-check('срок больше не меняется', again.status === 200 && Math.abs((again.body.file.expiresAt - Date.now()) / 3600000 - 168) < 0.5, `status=${again.status} срок не изменился — верно`);
+// Без подписки срок не увеличить
+const again = await api(`/api/file/${id}/link`, { method: 'POST', headers: H, body: JSON.stringify({ hours: 168, once: true }) });
+check('без подписки срок не увеличить → 403', again.status === 403, `status=${again.status}`);
 
 // Одноразовая: первая скачка работает, вторая нет
 const first = await fetch(`${BASE}/api/file/${id}?dl=1`);

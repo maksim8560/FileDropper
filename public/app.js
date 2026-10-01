@@ -179,6 +179,11 @@ function setSession(token, user) {
   renderAuth();
   // Подсказка в форме зависит от того, вошёл ли пользователь
   if (state.stats) renderUploadHint(state.stats);
+  // Сроки ссылок зависят от подписки — обновляем их после входа и выхода
+  loadBilling().then(() => {
+    renderSubscription();
+    if (state.stats) renderUploadHint(state.stats);
+  });
 }
 
 function renderAuth() {
@@ -358,11 +363,45 @@ function fileRow(file, { onDelete = null, badge = null } = {}) {
       } catch (err) {
         toast(err.message || 'Не удалось создать ссылку', 'err');
       }
+      await loadBilling();
       renderProfile();
       loadStats();
     };
     wrap.append(linkOptions(create));
     actions.append(wrap);
+  }
+
+  // Созданную ссылку можно пережать по сроку — пока это позволяет подписка.
+  if (!file.ttlPending && state.billing?.ttl?.selectable) {
+    const edit = button('Срок', 'i-timer', 'btn btn-sm');
+    edit.addEventListener('click', () => {
+      const wrap = document.createElement('div');
+      wrap.className = 'q-ttl';
+      const save = async ({ hours }) => {
+        try {
+          await api(`/api/file/${file.id}/link`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ hours }),
+          });
+          toast('Срок изменён', 'ok');
+        } catch (err) {
+          toast(err.message || 'Не удалось изменить срок', 'err');
+        }
+        renderProfile();
+        loadStats();
+      };
+      wrap.append(linkOptions(save));
+      // В форме правки срока переключатель «одноразовая» не нужен.
+      const onceBox = wrap.querySelector('.q-ttl-once');
+      if (onceBox) onceBox.remove();
+      const label = wrap.querySelector('.q-ttl-label');
+      if (label) label.textContent = 'новый срок';
+      const create = wrap.querySelector('.btn');
+      if (create) create.textContent = 'Сохранить срок';
+      actions.replaceChildren(wrap);
+    });
+    actions.append(edit);
   }
 
   const copy = button('Копировать', 'i-copy');
@@ -402,13 +441,15 @@ function selectProfileTab(name) {
 }
 
 async function renderProfile() {
-  const data = await loadProfile();
+  const [data] = await Promise.all([loadProfile(), loadBilling()]);
   if (!data) {
     openAuthModal('login');
     history.pushState({}, '', '#/');
     route();
     return;
   }
+
+  renderSubscription();
 
   const letter = (data.user.username || 'Ф').trim().charAt(0).toUpperCase();
   $('#profAvatar').textContent = letter;
@@ -461,6 +502,19 @@ async function loadAdminPanel() {
     $('#setAnonTtl').value = s.anonymousTtlHours ?? 1;
     $('#setRegistration').checked = !!s.allowRegistration;
     $('#setMaintenance').checked = !!s.maintenance;
+
+    // Подписка и оплата
+    $('#setSubEnabled').checked = !!s.subEnabled;
+    $('#setSubPrice').value = s.subPriceRub ?? 0;
+    $('#setSubPeriod').value = s.subPeriodDays ?? 30;
+    $('#setSubMaxTtl').value = s.subMaxTtlDays ?? 30;
+    $('#setSubFreeTtl').value = s.subFreeTtlHours ?? 24;
+    const note = $('#subPayNote');
+    if (note && state.billing?.subscription?.paymentConfigured === false) {
+      note.textContent =
+        'Оплата идёт через CloudPayments. Сейчас терминал не подключён: добавь Public ID и API Secret ' +
+        'как секреты Worker\'а (CLOUDPAYMENTS_PUBLIC_ID, CLOUDPAYMENTS_SECRET_KEY) — до этого работает только ручная выдача.';
+    }
 
     const cards = [
       ['Файлов', overview.counts.files],
@@ -602,9 +656,16 @@ async function saveSettings(event) {
         anonymousTtlHours: Number($('#setAnonTtl').value),
         allowRegistration: $('#setRegistration').checked,
         maintenance: $('#setMaintenance').checked,
+        subEnabled: $('#setSubEnabled').checked,
+        subPriceRub: Number($('#setSubPrice').value),
+        subPeriodDays: Number($('#setSubPeriod').value),
+        subMaxTtlDays: Number($('#setSubMaxTtl').value),
+        subFreeTtlHours: Number($('#setSubFreeTtl').value),
       }),
     });
     toast('Настройки сохранены', 'ok');
+    await loadBilling();
+    renderSubscription();
     loadStats();
   } catch (err) {
     toast(err.message, 'err');
@@ -613,6 +674,34 @@ async function saveSettings(event) {
 
 function initAdmin() {
   $('#adminForm').addEventListener('submit', saveSettings);
+  $('#subBuyBtn').addEventListener('click', buySubscription);
+
+  // Ручная выдача подписки: на случай, пока терминал не подключён.
+  $('#subGrantBtn').addEventListener('click', async () => {
+    const login = $('#subGrantLogin').value.trim();
+    if (!login) return toast('Впиши логин', 'err');
+    try {
+      const res = await api('/api/admin/subscription', {
+        method: 'PUT',
+        body: JSON.stringify({ login, days: Number($('#subGrantDays').value) || undefined }),
+      });
+      toast(`Подписка выдана до ${dateTime(res.subscription.expiresAt)}. Файлов восстановлено: ${res.restored || 0}`, 'ok');
+      $('#subGrantLogin').value = '';
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  $('#subRevokeBtn').addEventListener('click', async () => {
+    const login = $('#subGrantLogin').value.trim();
+    if (!login) return toast('Впиши логин', 'err');
+    try {
+      const res = await api('/api/admin/subscription', { method: 'PUT', body: JSON.stringify({ login, revoke: true }) });
+      toast(`Подписка отозвана. Срок файлов срезан: ${res.files || 0}`, 'ok');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
 
   $('#noteForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -668,6 +757,7 @@ async function loadStats() {
     state.stats = stats;
 
     $('#statFiles').textContent = stats.listed ? String(stats.files) : '—';
+    $('#statToday').textContent = Number.isFinite(stats.filesToday) ? String(stats.filesToday) : '—';
     $('#statSize').textContent = `${stats.maxFileSizeMb} МБ`;
     $('#statBackend').textContent = stats.storage.degraded ? 'в памяти' : 'в облаке';
     $('#limitsHint').textContent = `До ${stats.maxFileSizeMb} МБ на файл · до ${stats.maxFiles ?? 4} файлов за раз`;
@@ -689,6 +779,7 @@ async function loadStats() {
     renderStorageNotice(stats.storage);
   } catch {
     $('#statFiles').textContent = '—';
+    $('#statToday').textContent = '—';
     renderStoragePill({ degraded: true, provider: 'offline' });
   }
 }
@@ -718,25 +809,22 @@ function setMaintenance(on) {
 
 /**
  * Шаг после загрузки: выбираем срок жизни и одноразовость, затем появляется
- * ссылка. Гостям срок назначается сам, но одноразовую ссылку они выбрать могут.
+ * ссылка. Набор сроков приходит с сервера — он зависит от подписки.
  */
 function linkOptions(create) {
   const wrap = document.createElement('div');
   wrap.className = 'q-ttl';
 
+  const options = state.billing?.ttl?.options?.length
+    ? state.billing.ttl.options
+    : state.stats?.ttlOptions || [{ hours: 24, label: '24 часа' }];
+
   const label = document.createElement('span');
   label.className = 'q-ttl-label';
-  label.textContent = 'срок жизни';
+  label.textContent = options.length > 1 ? 'срок жизни' : 'срок ссылки';
   wrap.append(label);
 
-  const options = state.stats?.ttlOptions || [
-    { hours: 1, label: '1 час' },
-    { hours: 24, label: '24 часа' },
-    { hours: 168, label: '7 дней' },
-    { hours: 0, label: 'Навсегда' },
-  ];
-
-  let hours = Number(state.stats?.defaultTtlHours ?? 24) || 24;
+  let hours = Number(options[0]?.hours ?? 24);
   let once = false;
 
   for (const opt of options) {
@@ -777,6 +865,90 @@ function onceToggle(onChange, initial = false) {
   text.textContent = 'одноразовая';
   label.append(box, text);
   return label;
+}
+
+/**
+ * Состояние подписки. Сервер сам решает, какие сроки доступны, поэтому клиент
+ * не придумывает правила, а показывает то, что пришло.
+ */
+async function loadBilling() {
+  if (!state.user) {
+    state.billing = null;
+    return null;
+  }
+  try {
+    state.billing = await api('/api/billing/status');
+  } catch {
+    state.billing = null;
+  }
+  return state.billing;
+}
+
+function renderSubscription() {
+  const card = $('#subCard');
+  if (!card) return;
+  if (!state.user) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const sub = state.billing?.subscription;
+  const ttl = state.billing?.ttl;
+  if (!sub) {
+    $('#subBadge').textContent = 'Подписка';
+    $('#subTitle').textContent = 'Срок ссылки — 24 часа';
+    $('#subText').textContent = 'С подпиской срок выбираешь сам — до 30 дней на файл.';
+    $('#subBuyBtn').hidden = false;
+    $('#subBuyBtn').textContent = 'Оплатить подписку';
+    return;
+  }
+
+  const maxDays = sub.maxTtlDays || 30;
+  if (sub.active) {
+    $('#subBadge').textContent = 'Подписка активна';
+    $('#subBadge').dataset.state = 'ok';
+    $('#subTitle').textContent = `Срок ссылки — до ${maxDays} дней`;
+    $('#subText').textContent = `Подписка действует до ${dateTime(sub.expiresAt)}. Сроки выбираешь сам, не больше ${maxDays} дней.`;
+    $('#subBuyBtn').hidden = false;
+    $('#subBuyBtn').textContent = 'Продлить';
+  } else {
+    $('#subBadge').textContent = 'Без подписки';
+    $('#subBadge').dataset.state = 'off';
+    $('#subTitle').textContent = `Срок ссылки — ${ttl?.options?.[0]?.label || '24 часа'}`;
+    $('#subText').textContent = `Подписка открывает выбор срока: до ${maxDays} дней на файл.`;
+    $('#subBuyBtn').hidden = !sub.enabled || !sub.paymentConfigured;
+  }
+}
+
+/** Оплата: создаём заказ и уходим на страницу CloudPayments. */
+async function buySubscription() {
+  try {
+    const order = await api('/api/billing/checkout', { method: 'POST' });
+    if (!order.paymentUrl) throw new Error('Платёжная система не вернула ссылку');
+    sessionStorage.setItem('fo:pay', '1');
+    window.location.href = order.paymentUrl;
+  } catch (err) {
+    toast(err.message || 'Не удалось перейти к оплате', 'err');
+  }
+}
+
+/** Человек вернулся с оплаты: подписка могла ещё не появиться — подождём. */
+async function watchPayment() {
+  if (sessionStorage.getItem('fo:pay') !== '1') return;
+  sessionStorage.removeItem('fo:pay');
+
+  for (let i = 0; i < 10; i++) {
+    await loadBilling();
+    if (state.billing?.subscription?.active) {
+      renderSubscription();
+      toast('Подписка активна — сроки снова твои', 'ok');
+      loadStats();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  toast('Оплата ещё обрабатывается — обнови страницу через минуту', 'info');
 }
 
 function renderStoragePill(storage) {
@@ -826,9 +998,32 @@ function renderUploadHint(stats = state.stats) {
   const hours = Number(stats?.settings?.anonymousTtlHours ?? 1) || 1;
   state.ttl = hours;
 
+  if (!state.user) {
+    text.textContent =
+      `Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ` +
+      `Гостям ограничено до ${hours} ${plural(hours, ['часа', 'часов', 'часов'])}.`;
+    return;
+  }
+
+  // У зарегистрированного срок зависит от подписки: без неё — сутки,
+  // с подпиской — выбирает сам, до потолка из настроек.
+  const billing = state.billing;
+  if (!billing) {
+    text.textContent = 'Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла.';
+    return;
+  }
+
+  const sub = billing.subscription || {};
+  const option = billing.ttl?.options?.[0]?.label || '24 часа';
+  if (sub.active) {
+    text.textContent =
+      `Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ` +
+      `С подпиской доступно до ${sub.maxTtlDays || 30} дней.`;
+    return;
+  }
   text.textContent =
-    'Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ' +
-    `Гостям ограничено до ${hours} ${plural(hours, ['часа', 'часов', 'часов'])}.`;
+    `Срок жизни ссылки и режим «одноразовая» выбираются после загрузки файла. ` +
+    `Подписка открывает выбор до ${sub.maxTtlDays || 30} дней, без неё ссылка живёт ${option}.`;
 }
 
 /* ----------------------------- Загрузка ---------------------------- */
@@ -1382,6 +1577,9 @@ function init() {
   Promise.allSettled([loadProfile(), loadStats()]).finally(() => {
     document.documentElement.classList.remove('booting');
   });
+
+  // Вернулся с оплаты: ждём, пока подписка появится.
+  watchPayment();
 
   setInterval(() => {
     if (!$('#view-home').hidden) loadStats();

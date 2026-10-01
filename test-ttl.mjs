@@ -97,9 +97,17 @@ check('чужой аккаунт не может выбрать срок → 403
 const bad = await api(`/api/file/${id}/link`, {
   method: 'POST',
   headers: H,
-  body: JSON.stringify({ hours: 7 }),
+  body: JSON.stringify({ hours: 0 }),
 });
-check('недопустимый срок → 400', bad.status === 400, `status=${bad.status}`);
+check('срок вне диапазона → 400', bad.status === 400, `status=${bad.status}`);
+
+// Без подписки дольше бесплатного срока нельзя
+const tooLong = await api(`/api/file/${id}/link`, {
+  method: 'POST',
+  headers: H,
+  body: JSON.stringify({ hours: 168 }),
+});
+check('7 дней без подписки → 403', tooLong.status === 403, `status=${tooLong.status}`);
 
 // Выбор срока
 const chosen = await api(`/api/file/${id}/link`, {
@@ -113,23 +121,31 @@ check('срок помечен как выбранный', chosen.body?.file?.tt
 const hours = (chosen.body.file.expiresAt - Date.now()) / 3600000;
 check('срок примерно 24 часа', Math.abs(hours - 24) < 0.2, `${hours.toFixed(2)} ч`);
 
-// Повторно срок не меняется (созданная ссылка зафиксирована)
-const again = await api(`/api/file/${id}/link`, {
-  method: 'POST',
+// Созданную ссылку можно укоротить, но не удлинить без подписки
+const shorter = await api(`/api/file/${id}/link`, {
+  method: 'PATCH',
+  headers: H,
+  body: JSON.stringify({ hours: 1 }),
+});
+check(
+  'срок можно укоротить',
+  shorter.status === 200 && Math.abs((shorter.body.file.expiresAt - Date.now()) / 3600000 - 1) < 0.2,
+  `status=${shorter.status}`,
+);
+
+const longer = await api(`/api/file/${id}/link`, {
+  method: 'PATCH',
   headers: H,
   body: JSON.stringify({ hours: 168 }),
 });
-check(
-  'второй раз срок не меняется',
-  again.status === 200 && Math.abs((again.body.file.expiresAt - Date.now()) / 3600000 - 24) < 0.2,
-  `status=${again.status} срок=${((again.body?.file?.expiresAt ?? 0) - Date.now()) / 3600000}`,
-);
+check('без подписки удлинить нельзя → 403', longer.status === 403, `status=${longer.status}`);
 
 // Индекс кабинета обновился
 const files = await api('/api/me/files', { headers: { authorization: `Bearer ${reg.body.token}` } });
 const entry = files.body?.files?.find((f) => f.id === id);
 check('в кабинете срок обновлён', entry && entry.ttlPending === false, JSON.stringify(entry));
-check('в кабинете виден правильный срок', entry && Math.abs((entry.expiresAt - Date.now()) / 3600000 - 24) < 0.2, String(entry?.expiresAt));
+// Последнее успешное изменение срока было на 1 час — он и должен быть в индексе
+check('в кабинете виден правильный срок', entry && Math.abs((entry.expiresAt - Date.now()) / 3600000 - 1) < 0.2, String(entry?.expiresAt));
 
 // Файл работает
 const dl = await fetch(`${BASE}/api/file/${id}?dl=1`);

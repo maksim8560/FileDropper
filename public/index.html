@@ -279,8 +279,8 @@
             <span class="stat-label">где хранится</span>
           </div>
           <div class="stat">
-            <span class="stat-value" id="statPrice">0 ₽</span>
-            <span class="stat-label">стоимость обмена</span>
+            <span class="stat-value" id="statToday">—</span>
+            <span class="stat-label">файлов за сегодня</span>
           </div>
         </section>
 
@@ -319,6 +319,19 @@
             <p class="muted profile-note" id="anonNote" hidden>
               Загруженные файлы появляются здесь, пока ты вошёл в аккаунт. Анонимные загрузки живут только по своей ссылке.
             </p>
+
+            <!-- Подписка: срок жизни ссылок зависит от неё -->
+            <div class="sub-card" id="subCard">
+              <div class="sub-card-main">
+                <div class="sub-card-title">
+                  <span class="sub-badge" id="subBadge">Без подписки</span>
+                  <strong id="subTitle">Срок ссылки — 24 часа</strong>
+                </div>
+                <p class="muted" id="subText">С подпиской можно выбирать срок самим — до 30 дней на файл.</p>
+              </div>
+              <button class="btn btn-primary btn-sm" id="subBuyBtn" type="button">Оплатить подписку</button>
+            </div>
+
             <ul class="file-list" id="myFiles" aria-live="polite"></ul>
             <p class="muted empty-note" id="myFilesEmpty" hidden>
               Пока пусто. Загрузи первый файл — он появится здесь.
@@ -377,6 +390,61 @@
                   <small>Загрузки временно закрыты, сайт читается</small>
                 </span>
               </label>
+
+              <h3 class="admin-sub">Подписка и оплата</h3>
+              <p class="muted profile-note" id="subPayNote">
+                Оплата идёт через CloudPayments. Включи её, когда подключишь терминал в личном кабинете
+                CloudPayments и добавишь вебхук на <code>/api/billing/webhook</code>.
+              </p>
+
+              <label class="switch">
+                <input type="checkbox" id="setSubEnabled" />
+                <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                <span class="switch-text">
+                  Принимать оплату на сайте
+                  <small>Выключишь — кнопка оплаты пропадёт, сроки продолжат считаться по текущим подпискам</small>
+                </span>
+              </label>
+
+              <div class="admin-row">
+                <label class="field">
+                  <span>Цена подписки, ₽</span>
+                  <input type="number" id="setSubPrice" min="0" max="100000" step="10" />
+                </label>
+                <label class="field">
+                  <span>За сколько дней</span>
+                  <input type="number" id="setSubPeriod" min="1" max="365" />
+                </label>
+              </div>
+
+              <div class="admin-row">
+                <label class="field">
+                  <span>Максимальный срок ссылки, дней</span>
+                  <input type="number" id="setSubMaxTtl" min="1" max="365" />
+                  <small class="field-hint">Столько сможет выбрать подписчик</small>
+                </label>
+                <label class="field">
+                  <span>Без подписки срок суток</span>
+                  <input type="number" id="setSubFreeTtl" min="1" max="744" />
+                  <small class="field-hint">Когда подписка кончится, срок срезается до этого значения</small>
+                </label>
+              </div>
+
+              <div class="admin-sub">Выдать подписку вручную</div>
+              <div class="admin-row admin-row-tight">
+                <label class="field">
+                  <span>Логин пользователя</span>
+                  <input type="text" id="subGrantLogin" placeholder="логин" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span>На сколько дней</span>
+                  <input type="number" id="subGrantDays" min="1" max="365" placeholder="30" />
+                </label>
+                <div class="admin-form-actions">
+                  <button class="btn btn-sm" id="subGrantBtn" type="button">Выдать</button>
+                  <button class="btn btn-sm btn-danger" id="subRevokeBtn" type="button">Отозвать</button>
+                </div>
+              </div>
 
               <div class="admin-form-actions">
                 <button class="btn btn-primary" type="submit">
