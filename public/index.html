@@ -85,6 +85,22 @@
       <symbol id="i-x" viewBox="0 0 24 24">
         <path d="m7 7 10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
       </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8.5" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path d="M4.5 20a7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </symbol>
+      <symbol id="i-exit" viewBox="0 0 24 24">
+        <path d="M10 5H6.5A2.5 2.5 0 0 0 4 7.5v9A2.5 2.5 0 0 0 6.5 19H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M15 8.5 18.5 12 15 15.5M18 12H9.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect x="5" y="10.5" width="14" height="9.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </symbol>
+      <symbol id="i-trash-sm" viewBox="0 0 24 24">
+        <path d="M5 7h14M10 7V5.5A1.5 1.5 0 0 1 11.5 4h1A1.5 1.5 0 0 1 14 5.5V7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M6.5 7l.8 11.1A2 2 0 0 0 9.3 20h5.4a2 2 0 0 0 2-1.9L17.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </symbol>
       <symbol id="i-arrow-left" viewBox="0 0 24 24">
         <path d="M14.5 5.5 8 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </symbol>
@@ -103,11 +119,48 @@
           <span class="brand-mark"><svg><use href="#i-logo" /></svg></span>
           <span class="brand-text">
             <strong>Файлообменник</strong>
-            <small>обмен файлами · без карт</small>
+            <small>обмен файлами за секунду</small>
           </span>
         </a>
 
         <div class="nav-actions">
+          <div class="auth-box" id="authBox" hidden>
+            <button class="btn btn-sm" id="loginBtn" type="button">Войти</button>
+            <button class="btn btn-sm btn-primary" id="registerBtn" type="button">Регистрация</button>
+          </div>
+
+          <div class="profile-box" id="profileBox" hidden>
+            <button class="profile-trigger" id="profileTrigger" type="button" aria-expanded="false" aria-haspopup="true">
+              <span class="avatar" id="avatarLetter">Ф</span>
+              <span class="profile-name" id="profileName">Профиль</span>
+              <svg class="caret" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+
+            <div class="glass dropdown" id="profileMenu" hidden>
+              <div class="dropdown-head">
+                <span class="avatar avatar-lg" id="avatarLetterBig">Ф</span>
+                <div>
+                  <strong id="menuName">Профиль</strong>
+                  <small id="menuSince">в файлообменнике</small>
+                </div>
+              </div>
+              <div class="dropdown-stats">
+                <div><b id="menuFiles">0</b><small>файлов</small></div>
+                <div><b id="menuSize">0 Б</b><small>объём</small></div>
+              </div>
+              <a class="dropdown-item" href="#/profile">
+                <svg><use href="#i-user" /></svg>
+                Мои файлы
+              </a>
+              <button class="dropdown-item danger" id="logoutBtn" type="button">
+                <svg><use href="#i-exit" /></svg>
+                Выйти
+              </button>
+            </div>
+          </div>
+
           <span class="pill" id="storagePill" title="Состояние хранилища" aria-live="polite">
             <span class="dot" aria-hidden="true"></span>
             <span id="storageText">проверяем…</span>
@@ -124,18 +177,13 @@
       <!-- ================= Главная ================= -->
       <section class="view" id="view-home">
         <div class="hero">
-          <p class="eyebrow">Apple Glass edition</p>
           <h1>
-            Обменивайся<br />
-            <span class="grad">файлами</span> за секунду
+            <span id="heroLine1">Обменивайся</span><br />
+            <span class="grad" id="heroLine2">файлами за секунду</span>
           </h1>
-          <p class="lede">
-            Перетащи файл — получишь ссылку. Кто угодно откроет её и скачает файл. Ни карт, ни кошельков, ни регистрации,
-            ни смс. Только стекло и градиенты.
-          </p>
+          <p class="lede" id="heroLede">Перетащи файл — получишь ссылку. Кто угодно откроет её и скачает файл.</p>
 
           <div class="chips" role="list">
-            <span class="chip" role="listitem"><svg><use href="#i-shield" /></svg> Без карт</span>
             <span class="chip" role="listitem"><svg><use href="#i-bolt" /></svg> Ссылка за секунду</span>
             <span class="chip" role="listitem"><svg><use href="#i-timer" /></svg> Срок по запросу</span>
           </div>
@@ -160,6 +208,10 @@
             <div class="option-group">
               <span class="option-label" id="ttlLabel">Срок жизни ссылки</span>
               <div class="segmented" role="radiogroup" aria-labelledby="ttlLabel" id="ttlGroup"></div>
+              <button class="ttl-hint" id="ttlHint" type="button" hidden>
+                <svg><use href="#i-timer" /></svg>
+                <span id="ttlHintText">Ссылка живёт 1 час — потом файл удалится безвозвратно. Войди, чтобы выбрать другой срок.</span>
+              </button>
             </div>
 
             <label class="switch">
@@ -175,23 +227,35 @@
           <ul class="queue" id="queue" aria-live="polite"></ul>
         </section>
 
-        <!-- Преимущества -->
-        <section class="features" aria-label="Почему это удобно">
-          <article class="glass feature">
-            <div class="feature-icon"><svg><use href="#i-shield" /></svg></div>
-            <h3>Никаких карт</h3>
-            <p>Поля «номер карты», «срок действия», «cvv» здесь нет вообще — и не появятся.</p>
-          </article>
-          <article class="glass feature">
-            <div class="feature-icon"><svg><use href="#i-bolt" /></svg></div>
-            <h3>Ссылка сразу</h3>
-            <p>Файл улетает в Upstash Blob, ссылка готова. Никаких очередей и «ожидайте, файл обрабатывается».</p>
-          </article>
-          <article class="glass feature">
-            <div class="feature-icon"><svg><use href="#i-timer" /></svg></div>
-            <h3>Ты решаешь</h3>
-            <p>Час, сутки, неделя или навсегда. Нужна приватность — жми «одноразовая ссылка».</p>
-          </article>
+        <!-- Как это работает -->
+        <section class="howto" aria-labelledby="howtoTitle">
+          <h2 id="howtoTitle">Как это работает</h2>
+          <p class="sub muted">Три шага, ноль регистраций</p>
+
+          <ol class="steps">
+            <li class="step">
+              <span class="step-num">01</span>
+              <h3>Перетащи файл</h3>
+              <p>В окно страницы или нажми и выбери на устройстве — можно сразу несколько.</p>
+            </li>
+            <li class="step">
+              <span class="step-num">02</span>
+              <h3>Получи ссылку</h3>
+              <p>Она готова сразу: копируй, отправляй кому угодно, публикуй где угодно.</p>
+            </li>
+            <li class="step">
+              <span class="step-num">03</span>
+              <h3>Скачай и забудь</h3>
+              <p>Файл исчезнет сам, когда выйдет срок. Или сразу после первого скачивания.</p>
+            </li>
+          </ol>
+
+          <p class="formats muted">
+            Поддерживаются
+            <span>JPG</span><span>PNG</span><span>GIF</span><span>WEBP</span><span>MP4</span><span>MOV</span><span>MP3</span
+            ><span>WAV</span><span>PDF</span><span>ZIP</span><span>TXT</span><span>CSV</span><span>JSON</span><span>DOCX</span
+            ><span>и любые другие</span>
+          </p>
         </section>
 
         <!-- Статистика -->
@@ -214,7 +278,153 @@
           </div>
         </section>
 
+        <section class="glass notice" id="maintenanceNotice" hidden>
+          <strong>Технические работы.</strong> Загрузки временно закрыты, но ссылки на уже загруженные файлы работают.
+        </section>
+
         <section class="glass notice" id="storageNotice" hidden></section>
+      </section>
+
+      <!-- ================= Личный кабинет ================= -->
+      <section class="view" id="view-profile" hidden>
+        <a class="back-link" href="#/">
+          <svg><use href="#i-arrow-left" /></svg>
+          На главную
+        </a>
+
+        <section class="glass panel profile-card">
+          <div class="profile-head">
+            <span class="avatar avatar-xl" id="profAvatar">Ф</span>
+            <div class="profile-title">
+              <h1 id="profName">Профиль</h1>
+              <p class="muted" id="profSince">—</p>
+            </div>
+            <div class="profile-totals">
+              <div><b id="profFiles">0</b><small>файлов</small></div>
+              <div><b id="profSize">0 Б</b><small>загружено</small></div>
+            </div>
+          </div>
+
+          <div class="segmented profile-tabs" role="tablist">
+            <button type="button" role="tab" data-profile-tab="files" aria-selected="true">Мои файлы</button>
+            <button type="button" role="tab" data-profile-tab="admin" aria-selected="false" id="adminTab" hidden>
+              Управление сайтом
+            </button>
+          </div>
+
+          <!-- Вкладка: мои файлы -->
+          <div data-profile-pane="files">
+            <p class="muted profile-note" id="anonNote" hidden>
+              Загруженные файлы появляются здесь, пока ты вошёл в аккаунт. Анонимные загрузки живут только по своей ссылке.
+            </p>
+            <ul class="file-list" id="myFiles" aria-live="polite"></ul>
+            <p class="muted empty-note" id="myFilesEmpty" hidden>
+              Пока пусто. Загрузи первый файл — он появится здесь.
+            </p>
+          </div>
+
+          <!-- Вкладка: панель управления -->
+          <div data-profile-pane="admin" hidden>
+            <div class="admin-grid" id="adminStats"></div>
+
+            <h3 class="admin-sub">Настройки сайта</h3>
+            <form class="admin-form" id="adminForm">
+              <label class="field">
+                <span>Заголовок на главной</span>
+                <textarea id="setHeroTitle" rows="2" placeholder="Первая строка\nвторая строка"></textarea>
+              </label>
+              <label class="field">
+                <span>Подпись под заголовком</span>
+                <textarea id="setHeroLede" rows="2"></textarea>
+              </label>
+
+              <div class="admin-row">
+                <label class="field">
+                  <span>Максимум на файл, МБ</span>
+                  <input type="number" id="setMaxMb" min="1" max="500" step="5" />
+                  <small class="field-hint">Cloudflare ограничивает тело запроса: 100 МБ на Free/Pro, 200 МБ на Business</small>
+                </label>
+                <label class="field">
+                  <span>Файлов за одну загрузку</span>
+                  <input type="number" id="setMaxFiles" min="1" max="10" />
+                </label>
+                <label class="field">
+                  <span>Срок по умолчанию, часов</span>
+                  <input type="number" id="setTtl" min="0" max="8760" />
+                </label>
+                <label class="field">
+                  <span>Срок для гостей, часов</span>
+                  <input type="number" id="setAnonTtl" min="1" max="720" />
+                </label>
+              </div>
+
+              <label class="switch">
+                <input type="checkbox" id="setRegistration" />
+                <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                <span class="switch-text">
+                  Разрешить регистрацию
+                  <small>Новые пользователи смогут завести аккаунт</small>
+                </span>
+              </label>
+
+              <label class="switch">
+                <input type="checkbox" id="setMaintenance" />
+                <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+                <span class="switch-text">
+                  Технические работы
+                  <small>Загрузки временно закрыты, сайт читается</small>
+                </span>
+              </label>
+
+              <div class="admin-form-actions">
+                <button class="btn btn-primary" type="submit">
+                  <svg><use href="#i-check" /></svg>
+                  Сохранить настройки
+                </button>
+                <button class="btn" id="cleanupBtn" type="button">
+                  <svg><use href="#i-bolt" /></svg>
+                  Очистить просроченные
+                </button>
+              </div>
+            </form>
+
+            <h3 class="admin-sub">Последние файлы</h3>
+            <ul class="file-list compact" id="adminFiles" aria-live="polite"></ul>
+
+            <h3 class="admin-sub">Данные сайта</h3>
+            <p class="muted profile-note">
+              Заметки и любые текстовые данные. Хранятся в том же бакете, что и файлы, — ключи
+              <code>notes/</code>.
+            </p>
+
+            <form class="admin-form" id="noteForm">
+              <label class="field">
+                <span>Название</span>
+                <input type="text" id="noteTitle" placeholder="Например: контакты поддержки" maxlength="120" />
+              </label>
+              <label class="field">
+                <span>Текст</span>
+                <textarea id="noteText" rows="4" placeholder="Любой текст: описание, ссылка, телефон…"></textarea>
+              </label>
+              <div class="admin-form-actions">
+                <button class="btn btn-primary" type="submit">
+                  <svg><use href="#i-check" /></svg>
+                  <span id="noteSubmitText">Сохранить запись</span>
+                </button>
+                <button class="btn" id="noteCancel" type="button" hidden>Отмена</button>
+              </div>
+            </form>
+
+            <ul class="note-list" id="noteList" aria-live="polite"></ul>
+          </div>
+
+          <div class="profile-actions">
+            <button class="btn btn-danger" id="profLogout" type="button">
+              <svg><use href="#i-exit" /></svg>
+              Выйти из аккаунта
+            </button>
+          </div>
+        </section>
       </section>
 
       <!-- ================= Страница файла ================= -->
@@ -259,12 +469,55 @@
       </section>
     </main>
 
-    <footer class="glass footer">
-      <span>Файлообменник · Cloudflare Workers + Upstash Blob</span>
-      <span class="muted">Сделано в стиле Apple Glass. Без фреймворков, без карт, без сюрпризов.</span>
-    </footer>
-
     <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+    <!-- ================= Вход и регистрация ================= -->
+    <div class="modal" id="authModal" hidden>
+      <div class="modal-backdrop" data-close></div>
+
+      <div class="glass modal-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <button class="modal-close icon-btn" id="authClose" type="button" aria-label="Закрыть">
+          <svg><use href="#i-x" /></svg>
+        </button>
+
+        <div class="modal-icon"><svg><use href="#i-lock" /></svg></div>
+        <h2 class="modal-title" id="authTitle">Вход в файлообменник</h2>
+        <p class="muted modal-sub" id="authSub">Войди, чтобы видеть свои файлы в кабинете</p>
+
+        <div class="segmented modal-tabs" role="tablist">
+          <button type="button" role="tab" data-auth-tab="login" aria-selected="true">Вход</button>
+          <button type="button" role="tab" data-auth-tab="register" aria-selected="false">Регистрация</button>
+        </div>
+
+        <form class="auth-form" id="authForm" autocomplete="on">
+          <label class="field">
+            <span>Логин</span>
+            <input type="text" id="loginInput" name="username" autocomplete="username" placeholder="maksim" required />
+          </label>
+
+          <label class="field">
+            <span>Пароль</span>
+            <input
+              type="password"
+              id="passwordInput"
+              name="password"
+              autocomplete="current-password"
+              placeholder="минимум 8 символов"
+              required
+            />
+          </label>
+
+          <p class="auth-error" id="authError" hidden></p>
+
+          <button class="btn btn-primary auth-submit" id="authSubmit" type="submit">
+            <svg><use href="#i-user" /></svg>
+            <span id="authSubmitText">Войти</span>
+          </button>
+        </form>
+
+        <p class="muted modal-hint">Пароль хранится только в виде PBKDF2-хеша.</p>
+      </div>
+    </div>
 
     <script src="./config.js"></script>
     <script type="module" src="./app.js"></script>

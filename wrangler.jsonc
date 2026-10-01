@@ -20,9 +20,11 @@
   },
 
   "vars": {
-    "UPSTASH_BLOB_URL": "https://b2e0533cedea.blob.upstash.io",
-    "MAX_FILE_SIZE_MB": "25",
+    "UPSTASH_BLOB_URL": "https://b73d6d33dd84.blob.upstash.io",
+    "PUBLIC_API_ORIGIN": "https://filedropper-api.sonora-online.workers.dev",
+    "MAX_FILE_SIZE_MB": "500",
     "MAX_FILES_PER_UPLOAD": "4",
-    "DEFAULT_TTL_HOURS": "24"
+    "DEFAULT_TTL_HOURS": "24",
+    "ADMIN_LOGINS": "maksim8560"
   }
 }

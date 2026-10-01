@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@upstash/blob": "^0.0.9"
   }
 }

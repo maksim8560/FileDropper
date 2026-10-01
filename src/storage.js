@@ -1,11 +1,18 @@
 /**
  * Слой хранения файлов.
  *
- * Основной провайдер — Upstash Blob (S3-совместимое хранилище, REST API).
- * Если токен не задан или хранилище отвечает ошибкой авторизации,
- * автоматически включается аварийный режим (память воркера) — сайт остаётся
- * работоспособным, но файлы живут только до перезапуска инстанса.
+ * Основной провайдер — Upstash Blob через официальный клиент @upstash/blob.
+ * Важно: сам бакет живёт за Cloudflare R2, и данные-plane ходит по S3-совместимому
+ * API с подписью SigV4 (временные креды выдаёт Upstash-агент). Поэтому «сырые»
+ * запросы вида POST /upload с Bearer-токеном не работают — 401 от R2.
+ * Официальный SDK делает это правильно, в том числе на Cloudflare Workers.
+ *
+ * Если токен не задан или хранилище отвечает ошибкой авторизации, автоматически
+ * включается аварийный режим (память воркера) — сайт остаётся работоспособным,
+ * но файлы живут только до перезапуска инстанса.
  */
+
+import { Bucket } from '@upstash/blob';
 
 const DEFAULT_BLOB_URL = 'https://b2e0533cedea.blob.upstash.io';
 
@@ -57,105 +64,118 @@ class BlobStorage extends BaseStorage {
     this.provider = 'upstash-blob';
     this.base = url.replace(/\/+$/, '');
     this.token = token;
+    this.bucket = new Bucket({ token, url: this.base });
   }
 
-  headers(extra = {}) {
-    return { authorization: `Bearer ${this.token}`, ...extra };
-  }
+  /** Любая ошибка от хранилища превращается в понятный StorageError. */
+  fail(err, action) {
+    const status = err?.status ?? err?.statusCode ?? err?.response?.status ?? null;
+    const raw = String(err?.message || err).slice(0, 160);
 
-  fail(res, action) {
-    if (res.status === 401 || res.status === 403) {
+    if (status === 401 || status === 403 || /unauthorized|forbidden/i.test(raw)) {
       this.authState = 'unauthorized';
-      this.lastError = `Upstash Blob отклонил токен (HTTP ${res.status}) при операции «${action}»`;
+      this.lastError = `Upstash Blob отклонил токен при операции «${action}»${status ? ` (HTTP ${status})` : ''}`;
       return new StorageError('Хранилище отклонило токен доступа', {
         status: 502,
         code: 'blob_unauthorized',
-        hint: 'Проверьте секрет UPSTASH_BLOB_TOKEN (wrangler secret put UPSTASH_BLOB_TOKEN) и права токена на запись.',
+        hint: 'Проверьте секрет UPSTASH_BLOB_TOKEN (wrangler secret put UPSTASH_BLOB_TOKEN) и URL бакета в vars.UPSTASH_BLOB_URL.',
       });
     }
-    this.lastError = `Upstash Blob: HTTP ${res.status} при операции «${action}»`;
+
+    if (status === 404 || /not found/i.test(raw)) {
+      const notFound = new StorageError('Файл не найден в хранилище', { status: 404, code: 'not_found' });
+      return notFound;
+    }
+
+    this.lastError = `Upstash Blob: ${raw}`;
     return new StorageError(this.lastError, { status: 502, code: 'blob_error' });
   }
 
-  /** PUT-подобная загрузка: POST /upload с заголовком x-upstash-blob-filename. */
-  async put(key, value, { contentType = 'application/octet-stream' } = {}) {
-    const res = await fetch(`${this.base}/upload`, {
-      method: 'POST',
-      headers: this.headers({ 'x-upstash-blob-filename': key, 'content-type': contentType }),
-      body: value,
-    });
-
-    if (!res.ok) throw this.fail(res, `загрузка ${key}`);
-
+  ok() {
     this.authState = 'ok';
     this.lastError = null;
-
-    let info = {};
-    try {
-      info = await res.json();
-    } catch {
-      /* Upstash всегда отдаёт JSON, но подстрахуемся */
-    }
-    return { key: info.pathname || key, url: info.url || `${this.base}/${key}` };
   }
 
-  /** Чтение: сначала с токеном, при 401 — ещё раз анонимно (публичный бакет). */
+  async put(key, value, { contentType = 'application/octet-stream', size } = {}) {
+    try {
+      // Upstash Blob требует известную длину до первого байта, иначе стрим отклоняется.
+      const res = await this.bucket.put(key, value, {
+        contentType,
+        allowOverwrite: true,
+        ...(Number.isFinite(size) ? { size } : {}),
+      });
+      this.ok();
+      return { key: res.path ?? key, url: res.url };
+    } catch (err) {
+      throw this.fail(err, `загрузка ${key}`);
+    }
+  }
+
+  /**
+   * Чтение идёт обычным GET по публичному адресу объекта: так нативно
+   * работает Range (перемотка видео/аудио) и ответ отдаётся потоком.
+   *
+   * Обязательно отключаем кэш: Upstash Blob отдаёт объекты с `max-age=3600`,
+   * поэтому CDN ещё час отдавал бы уже удалённые файлы — и «одноразовая
+   * ссылка» была бы не одноразовой. Плюс счётчик скачиваний и удаление
+   * не были бы видны сразу.
+   *
+   * Если бакет станет приватным — пробуем с токеном.
+   */
   async get(key, { range = null } = {}) {
-    const url = `${this.base}/${encodeKey(key)}`;
-    const rangeHeader = range ? { range } : {};
+    const url = `${this.base}/${encodeKey(key)}?nc=${Date.now()}`;
+    const headers = { 'cache-control': 'no-cache', ...(range ? { range } : {}) };
 
-    let res = await fetch(url, { headers: this.headers(rangeHeader) });
-
+    let res = await fetch(url, { headers: { authorization: `Bearer ${this.token}`, ...headers } });
     if (res.status === 401 || res.status === 403) {
-      res = await fetch(url, { headers: range ? { range } : {} });
+      res = await fetch(url, { headers });
     }
 
     if (res.status === 404 || res.status === 410) return null;
-    if (!res.ok && res.status !== 206) throw this.fail(res, `чтение ${key}`);
+    if (!res.ok && res.status !== 206) throw this.fail({ status: res.status }, `чтение ${key}`);
 
-    this.authState = res.status === 401 ? this.authState : 'ok';
-
+    this.ok();
     return {
       body: res.body,
-      status: res.status,
+      status: res.status === 206 ? 206 : 200,
       contentType: res.headers.get('content-type') || 'application/octet-stream',
       contentLength: res.headers.get('content-length'),
       contentRange: res.headers.get('content-range'),
-      acceptRanges: res.headers.get('accept-ranges'),
+      acceptRanges: res.headers.get('accept-ranges') || 'bytes',
       etag: res.headers.get('etag'),
     };
   }
 
   async del(key) {
-    const res = await fetch(`${this.base}/delete`, {
-      method: 'POST',
-      headers: this.headers({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ keys: [key] }),
-    });
-    if (!res.ok) throw this.fail(res, `удаление ${key}`);
-    return true;
+    try {
+      await this.bucket.del(encodeKey(key));
+      this.ok();
+      return true;
+    } catch (err) {
+      if (/not found|404/i.test(String(err?.message || err))) return true;
+      throw this.fail(err, `удаление ${key}`);
+    }
   }
 
   async list(prefix = '', limit = 200) {
-    const res = await fetch(`${this.base}/list`, {
-      method: 'POST',
-      headers: this.headers({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ prefix, limit }),
-    });
-    if (!res.ok) throw this.fail(res, `список ${prefix || '*'}`);
-
-    this.authState = 'ok';
-    const data = await res.json().catch(() => ({}));
-    return { blobs: Array.isArray(data.blobs) ? data.blobs : [], cursor: data.cursor ?? null };
+    try {
+      const res = await this.bucket.list({ prefix, limit });
+      this.ok();
+      return { blobs: res.blobs ?? [], cursor: res.cursor ?? null };
+    } catch (err) {
+      throw this.fail(err, `список ${prefix || '*'}`);
+    }
   }
 
-  /** Проверка живости хранилища (для /api/health и UI-статуса). */
+  /** Проверка живости хранилища (для /api/health и плашки в интерфейсе). */
   async ping() {
     try {
-      await this.list('', 1);
+      await this.bucket.list({ limit: 1 });
+      this.ok();
       return { ok: true };
     } catch (err) {
-      return { ok: false, error: err.message, code: err.code ?? null };
+      const wrapped = this.fail(err, 'проверка связи');
+      return { ok: false, error: wrapped.message, code: wrapped.code };
     }
   }
 }
@@ -173,7 +193,10 @@ class MemoryStorage extends BaseStorage {
   }
 
   async put(key, value, { contentType = 'application/octet-stream' } = {}) {
-    const buf = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(await new Response(value).arrayBuffer());
+    const buf =
+      value instanceof ArrayBuffer
+        ? new Uint8Array(value)
+        : new Uint8Array(await new Response(value).arrayBuffer());
     this.map.set(key, {
       body: buf,
       contentType,
@@ -229,7 +252,7 @@ class MemoryStorage extends BaseStorage {
     const blobs = [];
     for (const [key, item] of this.map) {
       if (key.startsWith(prefix)) {
-        blobs.push({ pathname: key, uploadedAt: item.uploadedAt, size: item.size });
+        blobs.push({ pathname: key, path: key, uploadedAt: item.uploadedAt, size: item.size });
       }
       if (blobs.length >= limit) break;
     }
@@ -249,7 +272,7 @@ let cached = null;
 let cachedKey = '';
 
 /**
- * Выбирает провайдера: токен есть → Blob, иначе память.
+ * Выбирает провайдера: токен есть → Upstash Blob, иначе память.
  * Результат кэшируется на время жизни изолята.
  */
 export function createStorage(env = {}) {
@@ -259,7 +282,9 @@ export function createStorage(env = {}) {
 
   if (cached && cachedKey === key) return cached;
 
-  cached = token ? new BlobStorage(url, token) : new MemoryStorage('UPSTASH_BLOB_TOKEN не задан — работает аварийный режим');
+  cached = token
+    ? new BlobStorage(url, token)
+    : new MemoryStorage('UPSTASH_BLOB_TOKEN не задан — работает аварийный режим');
   cachedKey = key;
   return cached;
 }

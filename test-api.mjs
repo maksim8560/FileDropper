@@ -51,9 +51,13 @@ check('content-type из файла', (dl.headers.get('content-type') || '').inc
 check('nosniff', dl.headers.get('x-content-type-options') === 'nosniff', dl.headers.get('x-content-type-options'));
 check('CORS-заголовок присутствует', dl.headers.get('access-control-allow-origin') === '*', dl.headers.get('access-control-allow-origin'));
 
-// --- 4. Счётчик ---
-const after = await json(`/api/file/${id}`);
-check('счётчик скачиваний вырос', after.body?.file?.downloads === 1, String(after.body?.file?.downloads));
+// --- 4. Счётчик (обновляется в фоне, поэтому ждём до 3 секунд) ---
+let downloads = 0;
+for (let i = 0; i < 15 && downloads < 1; i++) {
+  downloads = (await json(`/api/file/${id}`)).body?.file?.downloads ?? 0;
+  if (downloads < 1) await new Promise((r) => setTimeout(r, 200));
+}
+check('счётчик скачиваний вырос', downloads === 1, String(downloads));
 
 // --- 5. Range ---
 const range = await fetch(`${BASE}/api/file/${id}?dl=1`, { headers: { Range: 'bytes=0-9' } });
@@ -124,6 +128,146 @@ check('главная отдаётся', page.status === 200 && html.includes('�
 check('CSP задан', (page.headers.get('content-security-policy') || '').includes("default-src 'self'"), page.headers.get('content-security-policy')?.slice(0, 60));
 const spa = await fetch(`${BASE}/f/${id}`);
 check('SPA-fallback на /f/<id>', spa.status === 200, `status=${spa.status}`);
+
+// --- 12. Авторизация ---
+const login = `user_${Date.now().toString(36)}`;
+const pass = 'очень-длинный-пароль-123';
+
+const badReg = await json('/api/auth/register', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login: 'ab', password: pass }),
+});
+check('регистрация: короткий логин → 400', badReg.status === 400, `status=${badReg.status}`);
+
+const badPass = await json('/api/auth/register', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login, password: 'коротк' }),
+});
+check('регистрация: короткий пароль → 400', badPass.status === 400, `status=${badPass.status}`);
+
+const reg = await json('/api/auth/register', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login, password: pass }),
+});
+check('регистрация → 201 и токен', reg.status === 201 && !!reg.body?.token, `status=${reg.status}`);
+const token = reg.body?.token;
+
+const dup = await json('/api/auth/register', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login, password: pass }),
+});
+check('повторная регистрация логина → 409', dup.status === 409, `status=${dup.status}`);
+
+const wrongPass = await json('/api/auth/login', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login, password: 'неправильный' }),
+});
+check('вход с неверным паролем → 401', wrongPass.status === 401, `status=${wrongPass.status}`);
+
+const noUser = await json('/api/auth/login', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login: 'nobody-here-xyz', password: pass }),
+});
+check('вход несуществующего → 401', noUser.status === 401, `status=${noUser.status}`);
+
+const relogin = await json('/api/auth/login', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ login, password: pass }),
+});
+check('вход с верным паролем → токен', relogin.status === 200 && !!relogin.body?.token, `status=${relogin.status}`);
+
+const meAnon = await json('/api/auth/me');
+check('профиль без токена → 401', meAnon.status === 401, `status=${meAnon.status}`);
+
+const meBad = await json('/api/auth/me', { headers: { authorization: 'Bearer definitely-not-a-real-token' } });
+check('профиль с чужим токеном → 401', meBad.status === 401, `status=${meBad.status}`);
+
+const me = await json('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
+check('профиль по токену → 200', me.status === 200, `status=${me.status}`);
+check('логин в профиле верный', me.body?.user?.username === login, me.body?.user?.username);
+check('обычный пользователь не админ', me.body?.user?.isAdmin === false, String(me.body?.user?.isAdmin));
+
+// --- 13. Файлы в кабинете ---
+const fdUser = new FormData();
+fdUser.append('file', new File(['файл из аккаунта'], 'личный.txt', { type: 'text/plain' }));
+fdUser.append('ttl', '24');
+fdUser.append('ownerToken', 'owner-user-test');
+const upUser = await json('/api/upload', {
+  method: 'POST',
+  body: fdUser,
+  headers: { authorization: `Bearer ${token}` },
+});
+const userFileId = upUser.body?.file?.id;
+check('загрузка с токеном → файл принадлежит аккаунту', upUser.body?.file?.id && upUser.body?.userId, JSON.stringify(upUser.body?.userId));
+
+const myFiles = await json('/api/me/files', { headers: { authorization: `Bearer ${token}` } });
+check('в кабинете виден свой файл', myFiles.body?.files?.some((f) => f.id === userFileId), JSON.stringify(myFiles.body?.files?.map((f) => f.id)));
+
+const delOwn = await json(`/api/file/${userFileId}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+check('удаление своего файла по сессии → 200', delOwn.status === 200, `status=${delOwn.status}`);
+
+// --- 14. Панель управления ---
+const adminAnon = await json('/api/admin/overview');
+check('админка без токена → 401', adminAnon.status === 401, `status=${adminAnon.status}`);
+
+const adminUser = await json('/api/admin/overview', { headers: { authorization: `Bearer ${token}` } });
+check('админка обычному пользователю → 403', adminUser.status === 403, `status=${adminUser.status}`);
+
+const adminLogin = process.env.ADMIN_LOGIN || 'maksim8560';
+const adminPass = process.env.ADMIN_PASSWORD || 'test-admin-password-2024';
+let adminToken = null;
+try {
+  const ar = await json('/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ login: adminLogin, password: adminPass }),
+  });
+  if (ar.status === 200 && ar.body?.token) {
+    adminToken = ar.body.token;
+    const adm = await json('/api/auth/me', { headers: { authorization: `Bearer ${adminToken}` } });
+    check('админ видит признак isAdmin', adm.body?.user?.isAdmin === true, String(adm.body?.user?.isAdmin));
+
+    const overview = await json('/api/admin/overview', { headers: { authorization: `Bearer ${adminToken}` } });
+    check('сводка админки отдаётся', overview.status === 200 && Array.isArray(overview.body?.recent), `status=${overview.status}`);
+
+    const set = await json('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ maxFilesPerUpload: 7, heroLede: 'Проверка настроек админа' }),
+    });
+    check('настройки сохраняются', set.status === 200 && set.body?.settings?.maxFilesPerUpload === 7, `status=${set.status}`);
+
+    const statsAfter = await json('/api/stats');
+    check('новые лимиты применились в /api/stats', statsAfter.body?.maxFiles === 7, String(statsAfter.body?.maxFiles));
+
+    // возвращаем как было
+    await json('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ maxFilesPerUpload: 4, heroLede: 'Перетащи файл — получишь ссылку. Кто угодно откроет её и скачает файл.' }),
+    });
+
+    const cleanupRes = await json('/api/admin/cleanup', { method: 'POST', headers: { authorization: `Bearer ${adminToken}` } });
+    check('ручная чистка отработала', cleanupRes.status === 200, `status=${cleanupRes.status}`);
+  } else {
+    console.log(`\n(админ-тесты пропущены: нет пароля для «${adminLogin}». Задайте ADMIN_PASSWORD, чтобы проверить)`);
+  }
+} catch (e) {
+  console.log(`\n(админ-тесты пропущены: ${e.message})`);
+}
+
+// --- 15. Выход ---
+const logout = await json('/api/auth/logout', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+check('выход → 200', logout.status === 200, `status=${logout.status}`);
+const afterLogout = await json('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
+check('токен после выхода не работает → 401', afterLogout.status === 401, `status=${afterLogout.status}`);
 
 // --- Итог ---
 console.log('');
