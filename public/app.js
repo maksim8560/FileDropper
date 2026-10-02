@@ -2117,15 +2117,17 @@ function init() {
   addEventListener('popstate', route);
   addEventListener('hashchange', route);
 
-  // Мягкая навигация без перезагрузки для внутренних ссылок вида /f/<id>
+  // Мягкая навигация без перезагрузки для внутренних ссылок вида /f/<id>.
+  // Перехватываем ТОЛЬКО их: раньше сюда попадало всё подряд, включая кнопку
+  // «Скачать файл» (/api/file/<id>?dl=1) — клик глушился и уводил на главную.
   document.addEventListener('click', (e) => {
-    const link = e.target.closest('a[href^="/"]');
+    const link = e.target.closest('a[href^="/f/"]');
     if (!link || e.metaKey || e.ctrlKey || e.shiftKey || link.target === '_blank') return;
-    e.preventDefault();
     const href = link.getAttribute('href');
     // На Pages путь /f/<id> недоступен — переводим в hash.
-    const target = /^\/f\/([a-z0-9]{4,32})$/.test(href) ? `#${href}` : '#/';
-    history.pushState({}, '', target);
+    if (!/^\/f\/([a-z0-9]{4,32})$/.test(href)) return;
+    e.preventDefault();
+    history.pushState({}, '', `#${href}`);
     route();
     scrollTo({ top: 0, behavior: 'smooth' });
   });
