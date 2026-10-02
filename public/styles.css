@@ -219,7 +219,8 @@ h3 {
 
 /* ------------------- Окно создания ссылок ------------------- */
 
-.modal-card-wide {
+/* Два класса подряд — чтобы правило не перебивалось более поздним .modal-card. */
+.modal-card.modal-card-wide {
   width: min(560px, 100%);
   text-align: left;
 }
@@ -276,7 +277,7 @@ h3 {
 }
 
 .link-row-body .q-link {
-  flex: 1 1 100%;
+  flex: 1 1 220px;
 }
 
 /* --------------------- Технические работы --------------------- */
@@ -1619,27 +1620,48 @@ main {
   gap: 8px;
 }
 
+/* Готовая ссылка: адрес в плашке и две кнопки-иконки. Всё в одну строку,
+   без длинных подписей — в окне шириной 560px это занимает узкую полосу. */
 .q-link {
   display: flex;
   align-items: center;
-  gap: 8px;
-  max-width: 210px;
-  padding: 8px 10px 8px 12px;
+  gap: 7px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 12px 6px 10px;
   border-radius: 999px;
   border: 1px solid var(--glass-stroke);
-  background: var(--fill-soft);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 9%, var(--fill-soft));
+  color: var(--accent);
+}
+
+.q-link svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
 }
 
 .q-link b {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.q-act {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+}
+
+.q-act svg {
+  width: 17px;
+  height: 17px;
 }
 
 .q-badge {

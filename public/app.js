@@ -113,6 +113,18 @@ function button(label, iconId, className = 'btn btn-sm') {
   return btn;
 }
 
+/** Кнопка только с иконкой: занимает мало места, но с подсказкой. */
+function iconButton(iconId, label, onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'icon-btn q-act';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.append(icon(iconId));
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
 /**
  * Запрос к API. Объект в body превращаем в JSON сами: иначе он уедет как
  * «[object Object]», сервер его не разберёт, а человек увидит ошибку в
@@ -1527,23 +1539,25 @@ const linkModal = {
     body.replaceChildren();
 
     if (data.link) {
-      const link = document.createElement('div');
-      link.className = 'q-link';
-      const text = document.createElement('b');
+      const url = shareUrl(data.file.id);
       // Именно hash-ссылка: путь /f/<id> открывался бы совсем без стилей,
       // потому что относительные ссылки на CSS уезжают в /f/.
-      const url = shareUrl(data.file.id);
-      text.textContent = url;
+      // В плашке показываем только путь — с доменом он обрезался по середине.
+      const shown = url.replace(location.origin, '') || '/';
+
+      const link = document.createElement('div');
+      link.className = 'q-link';
+      link.title = url;
+      const text = document.createElement('b');
+      text.textContent = shown;
       link.append(icon('i-link'), text);
 
-      const copy = button('Копировать', 'i-copy');
-      copy.addEventListener('click', async () => {
+      const copy = iconButton('i-copy', 'Скопировать ссылку', async () => {
         const ok = await copyText(url);
         toast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать', ok ? 'ok' : 'err');
       });
 
-      const open = button('Открыть', 'i-share');
-      open.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+      const open = iconButton('i-share', 'Открыть ссылку', () => window.open(url, '_blank', 'noopener'));
 
       body.append(link, copy, open);
       return;
