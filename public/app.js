@@ -1871,7 +1871,7 @@ function showHome() {
   $('#view-file').hidden = true;
   $('#view-profile').hidden = true;
   $('#view-home').hidden = false;
-  document.title = 'Файлообменник — обменивайся файлами без карт и регистрации';
+  document.title = 'Работает быстрее скорости света';
   loadStats();
 }
 
@@ -1896,7 +1896,7 @@ async function showFile(id) {
     $('#fileCard').hidden = true;
     $('#fileError').hidden = false;
     $('#errorText').textContent = err.message;
-    document.title = 'Файл недоступен — Файлообменник';
+    document.title = 'Файл недоступен';
     if (err.status === 410) $('#errorTitle').textContent = 'Ссылка больше недоступна';
     else if (err.status === 404) $('#errorTitle').textContent = 'Файл не найден';
   }
@@ -1904,7 +1904,7 @@ async function showFile(id) {
 
 function renderFile(file) {
   $('#fileMeta').replaceChildren();
-  document.title = `${file.name} — Файлообменник`;
+  document.title = `${file.name} — Работает быстрее скорости света`;
   $('#fileName').textContent = file.name;
   $('#fileSub').textContent = `${bytes(file.size)} · ${file.type || 'двоичный файл'}`;
 
