@@ -71,7 +71,21 @@ class BlobStorage extends BaseStorage {
   /** Любая ошибка от хранилища превращается в понятный StorageError. */
   fail(err, action) {
     const status = err?.status ?? err?.statusCode ?? err?.response?.status ?? null;
-    const raw = String(err?.message || err).slice(0, 160);
+    // Тело ответа важно не меньше статуса: по нему видно, что именно сказал
+    // Upstash. Раньше сюда попадало «[object Object]» — отлаживать было нечем.
+    const body = typeof err?.body === 'string' ? err.body.slice(0, 200) : '';
+    const raw = [String(err?.message || '').slice(0, 160), body].filter(Boolean).join(' — ').slice(0, 240) || 'без ответа';
+
+    if (err?.name === 'TypeError' || /fetch failed|network|dns|enotfound/i.test(raw)) {
+      this.authState = 'unreachable';
+      this.lastError = `Хранилище недоступно во время операции «${action}»: ${raw}`;
+      return new StorageError('Хранилище недоступно', {
+        status: 502,
+        code: 'storage_unreachable',
+        detail: this.lastError,
+        hint: 'Проверьте, что бакет Upstash создан, а в vars.UPSTASH_BLOB_URL указан его адрес.',
+      });
+    }
 
     if (status === 401 || status === 403 || /unauthorized|forbidden/i.test(raw)) {
       this.authState = 'unauthorized';
@@ -156,13 +170,21 @@ class BlobStorage extends BaseStorage {
     const url = `${this.base}/${encodeKey(key)}?nc=${Date.now()}`;
     const headers = { 'cache-control': 'no-cache', ...(range ? { range } : {}) };
 
-    let res = await fetch(url, { headers: { authorization: `Bearer ${this.token}`, ...headers } });
-    if (res.status === 401 || res.status === 403) {
-      res = await fetch(url, { headers });
+    let res;
+    try {
+      res = await fetch(url, { headers: { authorization: `Bearer ${this.token}`, ...headers } });
+      if (res.status === 401 || res.status === 403) {
+        res = await fetch(url, { headers });
+      }
+    } catch (err) {
+      // Сеть/DNS/таймаут: раньше эта ошибка улетала наружу сырым TypeError.
+      throw this.fail(err, `чтение ${key}`);
     }
 
     if (res.status === 404 || res.status === 410) return null;
-    if (!res.ok && res.status !== 206) throw this.fail({ status: res.status }, `чтение ${key}`);
+    if (!res.ok && res.status !== 206) {
+      throw this.fail({ status: res.status, body: await res.text().catch(() => '') }, `чтение ${key}`);
+    }
 
     this.ok();
     return {

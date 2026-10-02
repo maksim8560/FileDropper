@@ -898,9 +898,12 @@ async function loadStats() {
     renderUploadHint(stats);
     renderStorageNotice(stats.storage);
   } catch {
+    // Статистика не пришла вовсе: значит хранилище не отвечает. Показываем
+    // честную плашку, а не пустую страницу.
     $('#statFiles').textContent = '—';
     $('#statToday').textContent = '—';
     renderStoragePill({ degraded: true, provider: 'offline' });
+    renderStorageNotice({ down: true });
   }
 }
 
@@ -1400,6 +1403,19 @@ function renderStoragePill(storage) {
 
 function renderStorageNotice(storage) {
   const notice = $('#storageNotice');
+  // Отдельный случай: хранилище не отвечает вообще. Тогда аварийный режим
+  // не спасает — не работают ни вход, ни файлы, и об этом надо сказать прямо.
+  if (storage.down) {
+    notice.hidden = false;
+    notice.dataset.state = 'err';
+    notice.replaceChildren(
+      document.createTextNode(
+        'Хранилище сейчас недоступно: не удаётся связаться с облаком, поэтому вход и загрузка файлов не работают. Мы уже чиним — попробуйте через минуту.',
+      ),
+    );
+    return;
+  }
+
   if (!storage.degraded) {
     notice.hidden = true;
     return;

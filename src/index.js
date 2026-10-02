@@ -345,15 +345,26 @@ const limits = (env) => ({
 /**
  * Лимиты с учётом настроек из панели управления: админ может поменять
  * максимальный размер и срок по умолчанию без деплоя.
+ *
+ * Если хранилище не отвечает, работаем на значениях по умолчанию: сайт
+ * должен показать страницу с понятным предупреждением, а не отдавать 502
+ * на каждый запрос — иначе при упавшем облаке не открывается вообще ничего.
  */
 async function effectiveLimits(env, kv) {
   const base = limits(env);
-  const settings = await readSettings(kv);
+  let settings = null;
+  try {
+    settings = await readSettings(kv);
+  } catch (err) {
+    console.error('settings unavailable, using defaults:', err?.message || err);
+  }
+  const merged = settings || { ...DEFAULT_SETTINGS, maintenance: true };
   return {
-    settings,
-    maxFileSize: clamp(Number(settings.maxFileSizeMb), 1, PLATFORM_MAX_MB) * 1024 * 1024,
-    maxFiles: clamp(Number(settings.maxFilesPerUpload), 1, 10),
-    defaultTtlHours: clamp(Number(settings.defaultTtlHours), 0, 24 * 365),
+    settings: merged,
+    settingsAvailable: !!settings,
+    maxFileSize: clamp(Number(merged.maxFileSizeMb), 1, PLATFORM_MAX_MB) * 1024 * 1024,
+    maxFiles: clamp(Number(merged.maxFilesPerUpload), 1, 10),
+    defaultTtlHours: clamp(Number(merged.defaultTtlHours), 0, 24 * 365),
   };
 }
 
@@ -987,13 +998,35 @@ async function handleApi(request, env, url, storage, kv, ctx) {
     } catch {
       listed = false;
     }
+
+    // Хранилище может быть недоступно (бакет удалён, сеть). Главная тогда
+    // всё равно отдаётся — с настройками по умолчанию и честной пометкой,
+    // что сайт временно не может принимать файлы. Раньше здесь был 502,
+    // и при неработающем хранилище страница оставалась пустой.
+    let contacts = [];
+    let storageDown = false;
+    try {
+      contacts = await publicContacts(kv);
+    } catch (err) {
+      storageDown = true;
+      console.error('contacts unavailable:', err?.message || err);
+    }
+
+    let today = 0;
+    try {
+      today = await filesToday(kv);
+    } catch {
+      storageDown = true;
+    }
+
+    const state = storage.status();
     return json({
       files,
       listed,
-      filesToday: await filesToday(kv),
+      filesToday: today,
       maxFileSizeMb: Math.round(cfg.maxFileSize / 1024 / 1024),
       maxFiles: cfg.maxFiles,
-      storage: storage.status(),
+      storage: { ...state, down: storageDown || state.authState === 'unreachable' },
       settings: {
         heroTitle: cfg.settings.heroTitle,
         heroLede: cfg.settings.heroLede,
@@ -1008,7 +1041,7 @@ async function handleApi(request, env, url, storage, kv, ctx) {
       ttlOptions: TTL_OPTIONS,
       defaultTtlHours: cfg.defaultTtlHours,
       auth: { enabled: true },
-      contacts: await publicContacts(kv),
+      contacts,
     });
   }
 
@@ -1951,6 +1984,25 @@ function storageFailure(err) {
   return fail(502, 'Не удалось сохранить файл', 'storage_error');
 }
 
+/**
+ * Любая ошибка хранилища в маршрутах API превращается в понятный ответ.
+ * Без этого человек видел «Хранилище недоступно» с кодом 502 и думал, что
+ * сломан пароль: на самом деле не работало хранилище.
+ */
+function apiFailure(err) {
+  if (err instanceof StorageError) {
+    const friendly = err.code === 'storage_unreachable'
+      ? 'Хранилище временно недоступно, мы чиним. Попробуйте через минуту.'
+      : err.message;
+    return fail(err.status, friendly, err.code, { hint: err.hint, detail: err.detail });
+  }
+  if (/fetch failed|dns|network|getaddrinfo/i.test(String(err?.message || ''))) {
+    return fail(502, 'Хранилище временно недоступно, мы чиним. Попробуйте через минуту.', 'storage_unreachable');
+  }
+  console.error('api error:', err?.message || err);
+  return fail(500, 'Внутренняя ошибка', 'internal_error');
+}
+
 /** Техрежим и лимит на IP — общие для всех вариантов загрузки. */
 async function uploadGate(request, cfg) {
   if (cfg.settings.maintenance) {
@@ -2016,7 +2068,13 @@ export default {
 
     try {
       if (url.pathname.startsWith('/api/')) {
-        const res = await handleApi(request, env, url, createStorage(env), createKv(env), ctx);
+        let res;
+        try {
+          res = await handleApi(request, env, url, createStorage(env), createKv(env), ctx);
+        } catch (err) {
+          // Упавшее хранилище не должно выглядеть как «неверный пароль».
+          res = apiFailure(err);
+        }
         const headers = new Headers(res.headers);
         for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
         for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
