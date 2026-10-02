@@ -2078,8 +2078,11 @@ main {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--bg) 62%, transparent);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  /* Размытие на весь экран — самая дорогая вещь на странице: браузер
+     пересчитывает его каждый кадр, пока под ним что-то анимируется. Поэтому
+     14px вместо 22px, а под ним всё замирает (см. body.is-modal-open). */
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   animation: fade-in 0.3s var(--ease) both;
 }
 
@@ -2089,8 +2092,26 @@ main {
   }
 }
 
-/* Стеклянная карточка: плотное размытие фона, тонкий светлый кант сверху,
-   мягкая тень и внутренний блик — как в системных окнах Apple. */
+/* Пока открыто окно, фон не анимируется: любая анимация под размытием
+   заставляет браузер пересчитывать размытие во весь экран. */
+body.is-modal-open .mesh,
+body.is-modal-open .grain,
+body.is-modal-open .pill .dot,
+body.is-modal-open .spinner {
+  animation-play-state: paused;
+}
+
+/* Стеклянная карточка: плотный фон, тонкий светлый кант сверху, мягкая тень и
+   внутренний блик — как в системных окнах Apple. Своего backdrop-filter у неё
+   нет: подложка под окном уже размыта, а второй слой размытия поверх первого
+   браузер считает целиком заново — это и было главной причиной подтормаживаний.
+   Класс .glass в разметке оставлен на случай старого кэша вкладки. */
+.modal-card,
+.modal-card.glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .modal-card {
   position: relative;
   width: min(420px, 100%);
@@ -2098,13 +2119,14 @@ main {
   border-radius: 30px;
   border: 1px solid var(--glass-stroke);
   background: var(--glass-bg-overlay);
-  backdrop-filter: blur(34px) saturate(190%);
-  -webkit-backdrop-filter: blur(34px) saturate(190%);
+  /* Размытия на самой карточке нет: фон под ней и так почти непрозрачный
+     (0.92/0.88), разницы не видно, а стоимость пересчёта — огромная. */
   box-shadow:
     var(--shadow),
     inset 0 1px 0 var(--glass-highlight),
     inset 0 -1px 0 rgba(0, 0, 0, 0.06);
   text-align: center;
+  contain: paint;
   animation: modal-in 0.4s var(--spring) both;
 }
 

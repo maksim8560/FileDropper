@@ -959,7 +959,7 @@ async function handleAdminDelete(request, env, kv, storage, id, ctx) {
   if (!meta) return fail(404, 'Файл не найден', 'not_found');
 
   await removeFile(storage, meta);
-  if (meta.userId) background(ctx, removeFromUserIndex(kv, meta.userId, id));
+  if (meta.userId) await removeFromUserIndex(kv, meta.userId, id).catch(() => {});
   return json({ ok: true, deleted: id });
 }
 
@@ -1323,7 +1323,9 @@ async function handleApi(request, env, url, storage, kv, ctx) {
       const byAccount = session && meta.userId && session.userId === meta.userId;
       if (!byToken && !byAccount) return fail(403, 'Нет прав на удаление этого файла', 'forbidden');
       await removeFile(storage, meta);
-      if (byAccount) background(ctx, removeFromUserIndex(kv, session.userId, id));
+      // Индекс ждём здесь, а не в фоне: иначе кабинет успевает показать
+      // только что удалённый файл, и он исчезает лишь после обновления страницы.
+      if (byAccount) await removeFromUserIndex(kv, session.userId, id).catch(() => {});
       return json({ ok: true, deleted: id });
     }
 
@@ -2021,6 +2023,16 @@ export default {
         const connect = connectSources(env);
         headers.set('content-security-policy', buildCsp(connect ? ` ${connect}` : ''));
         return new Response(res.body, { status: res.status, headers });
+      }
+
+      // Ссылка вида /f/<id> отдавалась совсем без стилей: страница приходила
+      // из SPA-заглушки, а относительные пути к CSS уезжали в /f/styles.css.
+      // Отправляем такой запрос на канонический вид /#/f/<id>.
+      if (/^\/f\/[A-Za-z0-9._-]{1,64}$/.test(url.pathname)) {
+        return new Response(null, {
+          status: 302,
+          headers: { ...documentHeaders(env), location: `/#${url.pathname}` },
+        });
       }
 
       const asset = await env.ASSETS.fetch(request);

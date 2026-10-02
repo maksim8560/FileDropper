@@ -264,12 +264,14 @@ function openAuthModal(mode = 'login') {
   $('#authForm').reset();
   applyAuthMode();
   $('#authModal').hidden = false;
+  lockScroll(true);
   setTimeout(() => $('#loginInput').focus(), 60);
 }
 
 function closeAuthModal() {
   $('#authModal').hidden = true;
   $('#authForm').reset();
+  lockScroll(false);
 }
 
 function applyAuthMode() {
@@ -458,10 +460,14 @@ function fileRow(file, { onDelete = null, badge = null } = {}) {
     const del = button('Удалить', 'i-trash-sm', 'btn btn-sm btn-danger');
     del.addEventListener('click', async () => {
       if (!confirm(`Удалить «${file.name}»?`)) return;
+      del.disabled = true;
       try {
         await onDelete(file);
+        // Строку убираем сразу: список не должен ждать серверный ответ.
+        li.remove();
         toast('Файл удалён', 'ok');
       } catch (err) {
+        del.disabled = false;
         toast(err.message, 'err');
       }
     });
@@ -1446,6 +1452,19 @@ function renderUploadHint(stats = state.stats) {
  * отдельном окне, там же появляется готовая ссылка. Ошибки — только в
  * уведомлении справа.
  */
+/**
+ * Пока открыто модальное окно, фон не скроллится и не анимируется: под
+ * размытым окном любая анимация заставляет браузер пересчитывать размытие
+ * во весь экран на каждом кадре — отсюда были подтормаживания.
+ */
+function lockScroll(on) {
+  const gap = window.innerWidth - document.documentElement.clientWidth;
+  document.body.classList.toggle('is-modal-open', on);
+  document.body.style.overflow = on ? 'hidden' : '';
+  // Компенсируем исчезающий скроллбар, иначе страница дёрнется вбок.
+  document.body.style.paddingRight = on && gap > 0 ? `${gap}px` : '';
+}
+
 const linkModal = {
   rows: new Map(), // id файла → элемент строки
   order: [], // id файлов в порядке появления
@@ -1453,11 +1472,13 @@ const linkModal = {
   open() {
     const modal = $('#linkModal');
     if (modal) modal.hidden = false;
+    lockScroll(true);
   },
 
   close() {
     const modal = $('#linkModal');
     if (modal) modal.hidden = true;
+    lockScroll(false);
     this.order = [];
     this.rows.clear();
     const list = $('#linkList');
@@ -1509,17 +1530,20 @@ const linkModal = {
       const link = document.createElement('div');
       link.className = 'q-link';
       const text = document.createElement('b');
-      text.textContent = data.links.page;
+      // Именно hash-ссылка: путь /f/<id> открывался бы совсем без стилей,
+      // потому что относительные ссылки на CSS уезжают в /f/.
+      const url = shareUrl(data.file.id);
+      text.textContent = url;
       link.append(icon('i-link'), text);
 
       const copy = button('Копировать', 'i-copy');
       copy.addEventListener('click', async () => {
-        const ok = await copyText(shareUrl(data.file.id));
+        const ok = await copyText(url);
         toast(ok ? 'Ссылка скопирована' : 'Не удалось скопировать', ok ? 'ok' : 'err');
       });
 
       const open = button('Открыть', 'i-share');
-      open.addEventListener('click', () => window.open(data.links.page, '_blank', 'noopener'));
+      open.addEventListener('click', () => window.open(url, '_blank', 'noopener'));
 
       body.append(link, copy, open);
       return;
@@ -2000,6 +2024,10 @@ function route() {
   show('#view-file');
   show('#view-profile');
   show('#view-pay');
+
+  // Страница сменилась, а окно осталось закрыто — снимаем блокировку прокрутки,
+  // иначе сайт нельзя было бы прокрутить.
+  if ($('#authModal').hidden && $('#linkModal').hidden) lockScroll(false);
 
   if (location.hash.startsWith('#/pay')) {
     // Страница оплаты: без входа её не открыть — платить нечем.
