@@ -1991,13 +1991,14 @@ function storageFailure(err) {
  */
 function apiFailure(err) {
   if (err instanceof StorageError) {
-    const friendly = err.code === 'storage_unreachable'
-      ? 'Хранилище временно недоступно, мы чиним. Попробуйте через минуту.'
-      : err.message;
-    return fail(err.status, friendly, err.code, { hint: err.hint, detail: err.detail });
+    // Человеку — понятная фраза, владельцу — техническая причина в detail.
+    return fail(err.status, 'Вход и загрузка временно не работают: сервер не достаёт до облака. Мы чиним, попробуйте через минуту.', err.code, {
+      hint: err.hint,
+      detail: err.detail || err.message,
+    });
   }
   if (/fetch failed|dns|network|getaddrinfo/i.test(String(err?.message || ''))) {
-    return fail(502, 'Хранилище временно недоступно, мы чиним. Попробуйте через минуту.', 'storage_unreachable');
+    return fail(502, 'Вход и загрузка временно не работают: сервер не достаёт до облака. Мы чиним, попробуйте через минуту.', 'storage_unreachable');
   }
   console.error('api error:', err?.message || err);
   return fail(500, 'Внутренняя ошибка', 'internal_error');
